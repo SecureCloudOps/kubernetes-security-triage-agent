@@ -1,0 +1,26 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.70.0"
+  },
+  "ArtifactName": "registry.example.com/payments/api:2.0.0",
+  "ArtifactType": "container_image",
+  "ArtifactID": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "Metadata": {
+    "ImageID": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "RepoTags": [
+      "registry.example.com/payments/api:2.0.0"
+    ],
+    "RepoDigests": [
+      "registry.example.com/payments/api@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    ]
+  },
+  "Results": [
+    {
+      "Target": "registry.example.com/payments/api:2.0.0 (alpine 3.21.0)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": null
+    }
+  ]
+}

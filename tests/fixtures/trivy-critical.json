@@ -1,0 +1,50 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.70.0"
+  },
+  "ArtifactName": "registry.example.com/payments/api:1.0.0",
+  "ArtifactType": "container_image",
+  "ArtifactID": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "Metadata": {
+    "ImageID": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "RepoTags": [
+      "registry.example.com/payments/api:1.0.0"
+    ],
+    "RepoDigests": [
+      "registry.example.com/payments/api@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    ]
+  },
+  "Results": [
+    {
+      "Target": "registry.example.com/payments/api:1.0.0 (alpine 3.20.2)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2025-12345",
+          "PkgName": "libcrypto3",
+          "InstalledVersion": "3.3.1-r0",
+          "FixedVersion": "3.3.2-r0",
+          "Severity": "CRITICAL",
+          "Title": "OpenSSL certificate validation issue",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-12345",
+          "References": [
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-12345"
+          ]
+        },
+        {
+          "VulnerabilityID": "CVE-2025-54321",
+          "PkgName": "busybox",
+          "InstalledVersion": "1.36.1-r29",
+          "FixedVersion": "",
+          "Severity": "HIGH",
+          "Title": "BusyBox archive extraction issue",
+          "References": [
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-54321"
+          ]
+        }
+      ]
+    }
+  ]
+}
