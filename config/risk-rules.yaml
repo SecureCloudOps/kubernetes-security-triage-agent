@@ -14,6 +14,8 @@ weights:
   secrets_read_permission: 25
   cluster_admin_binding: 40
   missing_network_policy: 10
+  missing_ingress_isolation: 10
+  missing_egress_isolation: 10
 
 severity_thresholds:
   critical: 80
