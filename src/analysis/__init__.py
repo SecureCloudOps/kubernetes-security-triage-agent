@@ -24,22 +24,32 @@ from .security_context_rules import (
     deterministic_finding_id,
     evaluate_security_context,
 )
+from .trivy_rules import (
+    TrivyRuleEngine,
+    analyze_trivy,
+    deterministic_trivy_finding_id,
+    evaluate_trivy,
+)
 
 __all__ = [
     "ExposureRuleEngine",
     "NetworkPolicyRuleEngine",
     "RBACRuleEngine",
     "SecurityContextRuleEngine",
+    "TrivyRuleEngine",
     "analyze_exposure",
     "analyze_network_policy",
     "analyze_rbac",
     "analyze_security_context",
+    "analyze_trivy",
     "deterministic_exposure_finding_id",
     "deterministic_network_policy_finding_id",
     "deterministic_rbac_finding_id",
     "deterministic_finding_id",
+    "deterministic_trivy_finding_id",
     "evaluate_exposure",
     "evaluate_network_policy",
     "evaluate_rbac",
     "evaluate_security_context",
+    "evaluate_trivy",
 ]

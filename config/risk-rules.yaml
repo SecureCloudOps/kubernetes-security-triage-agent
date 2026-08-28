@@ -20,6 +20,15 @@ weights:
   missing_ingress_isolation: 10
   missing_egress_isolation: 10
 
+# Standalone vulnerability scores preserve the scanner severity. The CVE
+# weights above are reserved for later multi-signal attack-path correlation.
+vulnerability_scores:
+  CRITICAL: 80
+  HIGH: 60
+  MEDIUM: 30
+  LOW: 10
+  UNKNOWN: 0
+
 severity_thresholds:
   critical: 80
   high: 60
