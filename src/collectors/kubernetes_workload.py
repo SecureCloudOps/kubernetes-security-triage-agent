@@ -202,6 +202,12 @@ class KubernetesWorkloadCollector:
                         "kind": kind,
                         "name": name,
                     },
+                    # Downstream collectors operate on the exact workload that
+                    # passed the identity check above. Keeping its normalized,
+                    # JSON-compatible representation here avoids a second API
+                    # read and lets the pipeline extract labels and the
+                    # ServiceAccount without widening any client's permissions.
+                    "manifest": dict(workload),
                     "pod_spec": dict(pod_spec),
                     "container_images": images,
                 },

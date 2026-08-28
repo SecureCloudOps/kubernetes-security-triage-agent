@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/scan-report.schema.json",
+  "title": "Deterministic Kubernetes Security Scan Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scan_status",
+    "target",
+    "collector_status",
+    "analyzer_status",
+    "findings",
+    "evidence_gaps",
+    "summary"
+  ],
+  "properties": {
+    "scan_status": { "enum": ["COMPLETE", "PARTIAL"] },
+    "target": { "$ref": "#/$defs/target" },
+    "collector_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workload",
+        "security_context",
+        "exposure",
+        "network_policy",
+        "rbac",
+        "trivy"
+      ],
+      "properties": {
+        "workload": { "$ref": "#/$defs/collectorStatus" },
+        "security_context": { "$ref": "#/$defs/collectorStatus" },
+        "exposure": { "$ref": "#/$defs/collectorStatus" },
+        "network_policy": { "$ref": "#/$defs/collectorStatus" },
+        "rbac": { "$ref": "#/$defs/collectorStatus" },
+        "trivy": { "$ref": "#/$defs/collectorStatus" }
+      }
+    },
+    "analyzer_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "security_context",
+        "exposure",
+        "network_policy",
+        "rbac",
+        "trivy"
+      ],
+      "properties": {
+        "security_context": { "$ref": "#/$defs/analyzerStatus" },
+        "exposure": { "$ref": "#/$defs/analyzerStatus" },
+        "network_policy": { "$ref": "#/$defs/analyzerStatus" },
+        "rbac": { "$ref": "#/$defs/analyzerStatus" },
+        "trivy": { "$ref": "#/$defs/analyzerStatus" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "evidence_gaps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidenceGap" }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical", "high", "medium", "low", "info"],
+      "properties": {
+        "critical": { "type": "integer", "minimum": 0 },
+        "high": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "low": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "scan_status": { "const": "COMPLETE" } },
+        "required": ["scan_status"]
+      },
+      "then": {
+        "properties": {
+          "evidence_gaps": { "maxItems": 0 },
+          "collector_status": {
+            "properties": {
+              "workload": { "const": "COMPLETE" },
+              "security_context": { "const": "COMPLETE" },
+              "exposure": { "const": "COMPLETE" },
+              "network_policy": { "const": "COMPLETE" },
+              "rbac": { "const": "COMPLETE" },
+              "trivy": { "const": "COMPLETE" }
+            }
+          },
+          "analyzer_status": {
+            "properties": {
+              "security_context": { "const": "COMPLETE" },
+              "exposure": { "const": "COMPLETE" },
+              "network_policy": { "const": "COMPLETE" },
+              "rbac": { "const": "COMPLETE" },
+              "trivy": { "const": "COMPLETE" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": { "evidence_gaps": { "minItems": 1 } }
+      }
+    }
+  ],
+  "$defs": {
+    "collectorStatus": {
+      "enum": [
+        "COMPLETE",
+        "PARTIAL",
+        "INSUFFICIENT_EVIDENCE",
+        "COLLECTION_FAILED"
+      ]
+    },
+    "analyzerStatus": { "enum": ["COMPLETE", "ANALYSIS_FAILED"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cluster", "namespace", "kind", "name", "container"],
+      "properties": {
+        "cluster": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "container": { "type": ["string", "null"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "observed_at", "collector_version", "details"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "observed_at": { "type": "string", "format": "date-time" },
+        "collector_version": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_id",
+        "title",
+        "status",
+        "severity",
+        "score",
+        "confidence",
+        "target",
+        "evidence",
+        "risk_factors",
+        "recommendations"
+      ],
+      "properties": {
+        "finding_id": {
+          "type": "string",
+          "pattern": "^KSA-[0-9a-fA-F]{12}$"
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "status": {
+          "enum": [
+            "CONFIRMED",
+            "INSUFFICIENT_EVIDENCE",
+            "COLLECTION_FAILED",
+            "ANALYSIS_FAILED"
+          ]
+        },
+        "severity": {
+          "enum": ["critical", "high", "medium", "low", "info"]
+        },
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "target": { "$ref": "#/$defs/target" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "risk_factors": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "attack_path": { "type": ["string", "null"] },
+        "blast_radius": { "type": ["string", "null"] },
+        "recommendations": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "evidenceGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "stage", "status", "errors"],
+      "properties": {
+        "component": {
+          "enum": [
+            "security_context",
+            "exposure",
+            "network_policy",
+            "rbac",
+            "trivy"
+          ]
+        },
+        "stage": { "enum": ["COLLECTION", "ANALYSIS"] },
+        "status": {
+          "enum": [
+            "PARTIAL",
+            "INSUFFICIENT_EVIDENCE",
+            "COLLECTION_FAILED",
+            "ANALYSIS_FAILED"
+          ]
+        },
+        "errors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

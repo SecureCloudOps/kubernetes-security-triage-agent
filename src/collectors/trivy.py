@@ -12,7 +12,7 @@ import subprocess
 import unicodedata
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from src.models import Evidence, ScanResult, ScanStatus, Target
 
@@ -235,6 +235,7 @@ class TrivyImageCollector:
         *,
         max_images: int = DEFAULT_MAX_IMAGES,
         collector_version: str = COLLECTOR_VERSION,
+        process_runner: Callable[..., Any] | None = None,
     ) -> None:
         if isinstance(max_images, bool) or not isinstance(max_images, int):
             raise TypeError("max_images must be an integer")
@@ -244,6 +245,9 @@ class TrivyImageCollector:
         self.collector_version = _required_text(
             collector_version, "collector_version"
         )
+        if process_runner is not None and not callable(process_runner):
+            raise TypeError("process_runner must be callable")
+        self._process_runner = process_runner
 
     def collect(
         self,
@@ -294,7 +298,11 @@ class TrivyImageCollector:
                 image,
             ]
             try:
-                completed = subprocess.run(
+                # Resolve the default at call time so existing callers can
+                # still patch subprocess.run, while pipeline callers can
+                # inject a fully offline process runner.
+                runner = self._process_runner or subprocess.run
+                completed = runner(
                     command,
                     shell=False,
                     timeout=TRIVY_TIMEOUT_SECONDS,
@@ -355,10 +363,13 @@ def collect_trivy_images(
     name: str = "unknown",
     max_images: int = DEFAULT_MAX_IMAGES,
     observed_at: datetime | str | None = None,
+    process_runner: Callable[..., Any] | None = None,
 ) -> ScanResult:
     """Convenience wrapper for collecting Trivy evidence."""
 
-    return TrivyImageCollector(max_images=max_images).collect(
+    return TrivyImageCollector(
+        max_images=max_images, process_runner=process_runner
+    ).collect(
         image_references,
         target=target,
         cluster=cluster,
