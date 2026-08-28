@@ -13,6 +13,9 @@ weights:
   host_namespace_access: 20
   secrets_read_permission: 25
   cluster_admin_binding: 40
+  namespace_admin_permission: 30
+  rbac_escalation_permission: 35
+  pod_exec_permission: 20
   missing_network_policy: 10
   missing_ingress_isolation: 10
   missing_egress_isolation: 10
