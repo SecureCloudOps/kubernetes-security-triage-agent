@@ -4,3 +4,9 @@
 __pycache__/
 *.py[cod]
 
+# Demo runtime artifacts (may contain short-lived credentials or scan evidence).
+demo/.generated/
+demo/reports/
+reports/
+*.kubeconfig
+*.token

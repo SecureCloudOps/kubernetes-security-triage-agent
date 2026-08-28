@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ksta-scanner
+  namespace: secure-demo
+automountServiceAccountToken: false
+---
+# Kubernetes RBAC is allow-only. These rules deliberately omit Secrets,
+# pods/log, pods/exec, and every mutation verb (create/update/patch/delete).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ksta-scanner-read
+  namespace: secure-demo
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["secure-web"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames: ["secure-no-access"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ksta-scanner-read
+  namespace: secure-demo
+subjects:
+  - kind: ServiceAccount
+    name: ksta-scanner
+    namespace: secure-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ksta-scanner-read
+---
+# Same minimal read surface for the second explicitly approved namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ksta-scanner-read
+  namespace: vulnerable-demo
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["vulnerable-web"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames: ["vulnerable-secret-reader"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ksta-scanner-read
+  namespace: vulnerable-demo
+subjects:
+  - kind: ServiceAccount
+    name: ksta-scanner
+    namespace: secure-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ksta-scanner-read
+---
+# Cluster-scoped reads are required because the RBAC collector resolves
+# ClusterRoleBindings that apply to every authenticated ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ksta-scanner-cluster-read
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ksta-scanner-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: ksta-scanner
+    namespace: secure-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ksta-scanner-cluster-read
