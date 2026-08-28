@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/finding.schema.json",
+  "title": "Kubernetes Security Finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "finding_id",
+    "title",
+    "status",
+    "severity",
+    "score",
+    "confidence",
+    "target",
+    "evidence",
+    "risk_factors",
+    "recommendations"
+  ],
+  "properties": {
+    "finding_id": { "type": "string", "pattern": "^KSA-[0-9a-fA-F]{12}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": [
+        "CONFIRMED",
+        "INSUFFICIENT_EVIDENCE",
+        "COLLECTION_FAILED",
+        "ANALYSIS_FAILED"
+      ]
+    },
+    "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cluster", "namespace", "kind", "name"],
+      "properties": {
+        "cluster": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "container": { "type": ["string", "null"] }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "observed_at", "collector_version", "details"],
+        "properties": {
+          "source": { "type": "string", "minLength": 1 },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "collector_version": { "type": "string", "minLength": 1 },
+          "details": { "type": "object" }
+        }
+      }
+    },
+    "risk_factors": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "attack_path": { "type": ["string", "null"] },
+    "blast_radius": { "type": ["string", "null"] },
+    "recommendations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

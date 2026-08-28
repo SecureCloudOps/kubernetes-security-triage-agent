@@ -1,0 +1,48 @@
+{
+  "finding_id": "KSA-8ba3cfa24d71",
+  "title": "Public workload contains a critical image vulnerability",
+  "status": "CONFIRMED",
+  "severity": "high",
+  "score": 55,
+  "confidence": "high",
+  "target": {
+    "cluster": "local-kind",
+    "namespace": "demo",
+    "kind": "Deployment",
+    "name": "payments-api",
+    "container": "api"
+  },
+  "evidence": [
+    {
+      "source": "trivy",
+      "observed_at": "2026-08-28T12:00:00Z",
+      "collector_version": "0.1.0",
+      "details": {
+        "vulnerability_id": "CVE-EXAMPLE",
+        "severity": "CRITICAL",
+        "package": "example-package"
+      }
+    },
+    {
+      "source": "kubernetes-service",
+      "observed_at": "2026-08-28T12:00:00Z",
+      "collector_version": "0.1.0",
+      "details": {
+        "service_type": "LoadBalancer"
+      }
+    }
+  ],
+  "risk_factors": [
+    "critical_cve",
+    "public_exposure"
+  ],
+  "attack_path": "An external client can reach the affected workload.",
+  "blast_radius": "Limited to the workload until RBAC evidence is collected.",
+  "recommendations": [
+    "Upgrade the affected package to a fixed version.",
+    "Restrict external exposure if it is not required."
+  ],
+  "limitations": [
+    "This finding does not prove exploitation."
+  ]
+}
