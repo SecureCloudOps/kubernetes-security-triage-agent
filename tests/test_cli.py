@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -89,6 +90,7 @@ def _run_with_mocks(
     *,
     fail_on: str = "none",
     ai: bool = False,
+    trivy_severity: str | None = None,
 ) -> tuple[int, Mock]:
     kubernetes_clients = {
         "core": Mock(name="CoreV1Api"),
@@ -123,6 +125,8 @@ def _run_with_mocks(
     ]
     if ai:
         arguments.append("--ai")
+    if trivy_severity is not None:
+        arguments.extend(["--trivy-severity", trivy_severity])
     code = cli.main(arguments)
     return code, pipeline
 
@@ -148,6 +152,54 @@ def test_scan_writes_matching_valid_json_and_markdown_with_mocked_dependencies(
     assert written["summary"]["high"] == 1
     assert "vulnerable-api" in markdown
     assert "| 0 | 1 | 0 | 0 | 0 |" in markdown
+
+
+def test_json_report_retains_vulnerabilities_aggregated_in_markdown(
+    tmp_path: Path,
+) -> None:
+    report = _report()
+    vulnerability_ids = set()
+    for number in range(125):
+        finding = deepcopy(report["findings"][0])
+        finding_id = f"KSA-{number + 1:012x}"
+        vulnerability_id = f"CVE-2026-{number:05d}"
+        vulnerability_ids.add(finding_id)
+        finding.update(
+            {
+                "finding_id": finding_id,
+                "title": f"{vulnerability_id} affects package-{number}",
+                "severity": "medium",
+                "score": 30,
+                "evidence": [
+                    {
+                        "source": "trivy",
+                        "observed_at": "2026-01-02T03:04:05Z",
+                        "collector_version": "1.0.0",
+                        "details": {
+                            "image": "example.invalid/api:1",
+                            "digest": "sha256:abc",
+                            "vulnerability_id": vulnerability_id,
+                            "severity": "MEDIUM",
+                            "package": f"package-{number}",
+                            "installed_version": "1.0.0",
+                            "fixed_version": "1.0.1",
+                        },
+                    }
+                ],
+            }
+        )
+        report["findings"].append(finding)
+    report["summary"]["medium"] = 125
+
+    json_path, markdown_path = cli._write_reports(tmp_path, report)
+    written = json.loads(json_path.read_text(encoding="utf-8"))
+    written_ids = {finding["finding_id"] for finding in written["findings"]}
+    markdown = markdown_path.read_text(encoding="utf-8")
+
+    assert vulnerability_ids <= written_ids
+    assert len(written["findings"]) == 126
+    assert "| Medium | 125 |" in markdown
+    assert "CVE-2026-00000" not in markdown
 
 
 def test_command_integration_mocks_kubernetes_apis_and_trivy_process(
@@ -241,6 +293,51 @@ def test_command_integration_mocks_kubernetes_apis_and_trivy_process(
     assert trivy_command[-1] == "example.invalid/api:1"
     assert (tmp_path / "scan-report.json").exists()
     assert (tmp_path / "scan-report.md").exists()
+
+
+def test_trivy_severity_filter_is_normalized_and_forwarded_to_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    code, _pipeline = _run_with_mocks(
+        monkeypatch,
+        tmp_path,
+        _report(),
+        trivy_severity="critical,HIGH,critical",
+    )
+
+    assert code == cli.EXIT_OK
+    options = cli.DeterministicScanPipeline.call_args.kwargs
+    assert options["trivy_severities"] == ("CRITICAL", "HIGH")
+
+
+def test_invalid_trivy_severity_filter_stops_before_pipeline_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline_factory = Mock()
+    load_context = Mock()
+    monkeypatch.setattr(cli, "DeterministicScanPipeline", pipeline_factory)
+    monkeypatch.setattr(cli, "load_current_context", load_context)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "scan",
+                "--namespace",
+                "demo",
+                "--kind",
+                "Deployment",
+                "--name",
+                "vulnerable-api",
+                "--allowed-namespace",
+                "demo",
+                "--trivy-severity",
+                "CRITICAL,SEVERE",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    load_context.assert_not_called()
+    pipeline_factory.assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,10 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from src.collectors.trivy import EVIDENCE_SOURCE as TRIVY_EVIDENCE_SOURCE
+
 REDACTED = "[REDACTED]"
+_AGGREGATED_VULNERABILITY_SEVERITIES = frozenset({"medium", "low", "info"})
 
 _SENSITIVE_KEY_PARTS = (
     "apikey",
@@ -116,6 +119,26 @@ def _json_block(value: Any) -> str:
     return rendered.replace("```", "` ` `")
 
 
+def _is_trivy_vulnerability_finding(finding: Mapping[str, Any]) -> bool:
+    evidence_items = finding.get("evidence", [])
+    if not isinstance(evidence_items, list):
+        return False
+    return any(
+        isinstance(evidence, Mapping)
+        and evidence.get("source") == TRIVY_EVIDENCE_SOURCE
+        and isinstance(evidence.get("details"), Mapping)
+        and isinstance(evidence["details"].get("vulnerability_id"), str)
+        for evidence in evidence_items
+    )
+
+
+def _is_aggregated_vulnerability_finding(finding: Mapping[str, Any]) -> bool:
+    return (
+        _is_trivy_vulnerability_finding(finding)
+        and finding.get("severity") in _AGGREGATED_VULNERABILITY_SEVERITIES
+    )
+
+
 def render_markdown(report: Mapping[str, Any]) -> str:
     """Render a scan report as readable Markdown without exposing secrets."""
 
@@ -177,7 +200,12 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     ]
     if not confirmed:
         lines.extend(["No confirmed findings.", ""])
-    for finding in confirmed:
+    detailed_confirmed = [
+        finding
+        for finding in confirmed
+        if not _is_aggregated_vulnerability_finding(finding)
+    ]
+    for finding in detailed_confirmed:
         finding_target = finding.get("target", {})
         if not isinstance(finding_target, Mapping):
             finding_target = {}
@@ -210,6 +238,32 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                         "",
                     ]
                 )
+
+    aggregated_vulnerability_counts = {
+        severity: sum(
+            1
+            for finding in confirmed
+            if _is_trivy_vulnerability_finding(finding)
+            and finding.get("severity") == severity
+        )
+        for severity in ("medium", "low", "info")
+    }
+    if any(aggregated_vulnerability_counts.values()):
+        lines.extend(
+            [
+                "### Aggregated Medium, Low, and Info Vulnerabilities",
+                "",
+                "Individual details for these vulnerability severities are omitted "
+                "from Markdown. Complete results remain available in the JSON report.",
+                "",
+                "| Severity | Vulnerability count |",
+                "| --- | ---: |",
+                f"| Medium | {aggregated_vulnerability_counts['medium']} |",
+                f"| Low | {aggregated_vulnerability_counts['low']} |",
+                f"| Info | {aggregated_vulnerability_counts['info']} |",
+                "",
+            ]
+        )
 
     lines.extend(
         [
@@ -362,6 +416,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     seen_recommendations: set[tuple[str, str]] = set()
     for finding in findings:
         if not isinstance(finding, Mapping):
+            continue
+        if _is_aggregated_vulnerability_finding(finding):
             continue
         finding_id = str(finding.get("finding_id", "unknown"))
         recommendations = finding.get("recommendations", [])

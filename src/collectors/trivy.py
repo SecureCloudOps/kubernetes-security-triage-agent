@@ -20,6 +20,13 @@ COLLECTOR_VERSION = "1.0.0"
 EVIDENCE_SOURCE = "trivy"
 DEFAULT_MAX_IMAGES = 20
 TRIVY_TIMEOUT_SECONDS = 300
+SUPPORTED_TRIVY_SEVERITIES = (
+    "UNKNOWN",
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+    "CRITICAL",
+)
 
 
 def _required_text(value: Any, field_name: str) -> str:
@@ -39,6 +46,39 @@ def _validate_image(image: Any) -> str:
     if any(unicodedata.category(character) == "Cc" for character in image):
         raise ValueError("image must not contain control characters")
     return image
+
+
+def normalize_trivy_severities(
+    value: str | Iterable[str] | None,
+) -> tuple[str, ...]:
+    """Return a validated, de-duplicated Trivy severity allowlist."""
+
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, (bytes, Mapping)) or not isinstance(value, Iterable):
+        raise TypeError(
+            "Trivy severities must be a comma-separated string or iterable"
+        )
+    else:
+        raw_items = list(value)
+
+    severities: list[str] = []
+    for index, item in enumerate(raw_items):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"Trivy severity at index {index} must not be empty")
+        severity = item.strip().upper()
+        if severity not in SUPPORTED_TRIVY_SEVERITIES:
+            allowed = ", ".join(SUPPORTED_TRIVY_SEVERITIES)
+            raise ValueError(
+                f"unsupported Trivy severity {item!r}; expected one of: {allowed}"
+            )
+        if severity not in severities:
+            severities.append(severity)
+    if not severities:
+        raise ValueError("at least one Trivy severity is required")
+    return tuple(severities)
 
 
 def _image_entries(
@@ -234,6 +274,7 @@ class TrivyImageCollector:
         self,
         *,
         max_images: int = DEFAULT_MAX_IMAGES,
+        severities: str | Iterable[str] | None = None,
         collector_version: str = COLLECTOR_VERSION,
         process_runner: Callable[..., Any] | None = None,
     ) -> None:
@@ -242,6 +283,7 @@ class TrivyImageCollector:
         if max_images < 1:
             raise ValueError("max_images must be at least 1")
         self.max_images = max_images
+        self.severities = normalize_trivy_severities(severities)
         self.collector_version = _required_text(
             collector_version, "collector_version"
         )
@@ -295,8 +337,10 @@ class TrivyImageCollector:
                 "json",
                 "--scanners",
                 "vuln",
-                image,
             ]
+            if self.severities:
+                command.extend(["--severity", ",".join(self.severities)])
+            command.append(image)
             try:
                 # Resolve the default at call time so existing callers can
                 # still patch subprocess.run, while pipeline callers can
@@ -362,13 +406,16 @@ def collect_trivy_images(
     kind: str = "Workload",
     name: str = "unknown",
     max_images: int = DEFAULT_MAX_IMAGES,
+    severities: str | Iterable[str] | None = None,
     observed_at: datetime | str | None = None,
     process_runner: Callable[..., Any] | None = None,
 ) -> ScanResult:
     """Convenience wrapper for collecting Trivy evidence."""
 
     return TrivyImageCollector(
-        max_images=max_images, process_runner=process_runner
+        max_images=max_images,
+        severities=severities,
+        process_runner=process_runner,
     ).collect(
         image_references,
         target=target,
@@ -384,8 +431,10 @@ __all__ = [
     "COLLECTOR_VERSION",
     "DEFAULT_MAX_IMAGES",
     "EVIDENCE_SOURCE",
+    "SUPPORTED_TRIVY_SEVERITIES",
     "TRIVY_TIMEOUT_SECONDS",
     "TrivyImageCollector",
     "collect_trivy_images",
+    "normalize_trivy_severities",
     "parse_trivy_report",
 ]

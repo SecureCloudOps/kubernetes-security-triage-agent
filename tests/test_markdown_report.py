@@ -1,5 +1,6 @@
 """Tests for safe, readable Markdown scan reports."""
 
+import json
 from copy import deepcopy
 
 from src.reporting.markdown import REDACTED, redact_report, render_markdown
@@ -76,6 +77,45 @@ def _report() -> dict:
     }
 
 
+def _vulnerability_finding(number: int, severity: str) -> dict:
+    report = _report()
+    target = report["target"]
+    trivy_severity = "UNKNOWN" if severity == "info" else severity.upper()
+    vulnerability_id = f"CVE-2026-{number:05d}"
+    return {
+        "finding_id": f"KSA-{number:012x}",
+        "title": f"{vulnerability_id} affects package-{number}",
+        "status": "CONFIRMED",
+        "severity": severity,
+        "score": {"critical": 80, "high": 60, "medium": 30, "low": 10, "info": 0}[
+            severity
+        ],
+        "confidence": "high",
+        "target": target,
+        "evidence": [
+            {
+                "source": "trivy",
+                "observed_at": "2026-01-02T03:04:05Z",
+                "collector_version": "1.0.0",
+                "details": {
+                    "image": "example.invalid/api:1",
+                    "digest": "sha256:abc",
+                    "vulnerability_id": vulnerability_id,
+                    "severity": trivy_severity,
+                    "package": f"package-{number}",
+                    "installed_version": "1.0.0",
+                    "fixed_version": "1.0.1",
+                },
+            }
+        ],
+        "risk_factors": [],
+        "attack_path": None,
+        "blast_radius": None,
+        "recommendations": [f"Upgrade package-{number}."],
+        "limitations": ["Runtime exploitability was not established."],
+    }
+
+
 def test_markdown_contains_required_sections_and_traceable_evidence() -> None:
     markdown = render_markdown(_report())
 
@@ -96,6 +136,44 @@ def test_markdown_contains_required_sections_and_traceable_evidence() -> None:
     assert "No exploitation was confirmed" in markdown
     assert "vulnerable-api" in markdown
     assert "AI analysis was not requested" in markdown
+
+
+def test_markdown_details_high_risk_vulnerabilities_and_aggregates_the_rest() -> None:
+    report = _report()
+    vulnerabilities = [
+        _vulnerability_finding(100, "critical"),
+        _vulnerability_finding(101, "high"),
+        _vulnerability_finding(102, "medium"),
+        _vulnerability_finding(103, "medium"),
+        _vulnerability_finding(104, "low"),
+        _vulnerability_finding(105, "low"),
+        _vulnerability_finding(106, "low"),
+        _vulnerability_finding(107, "info"),
+    ]
+    report["findings"].extend(vulnerabilities)
+    for finding in vulnerabilities:
+        report["summary"][finding["severity"]] += 1
+    original = deepcopy(report)
+
+    markdown = render_markdown(report)
+    json_report = json.loads(json.dumps(report))
+
+    assert report == original
+    assert len(json_report["findings"]) == 1 + len(vulnerabilities)
+    assert "CVE-2026-00100" in markdown
+    assert "CVE-2026-00101" in markdown
+    assert "KSA-000000000066" not in markdown
+    assert "KSA-000000000068" not in markdown
+    assert "KSA-00000000006b" not in markdown
+    assert "| Medium | 2 |" in markdown
+    assert "| Low | 3 |" in markdown
+    assert "| Info | 1 |" in markdown
+    assert "Complete results remain available in the JSON report" in markdown
+    assert "Container allows privilege escalation" in markdown
+    assert "Upgrade package-102" not in markdown
+    json_finding_ids = {item["finding_id"] for item in json_report["findings"]}
+    for finding in vulnerabilities:
+        assert finding["finding_id"] in json_finding_ids
 
 
 def test_plausible_paths_and_ai_interpretation_are_separate_from_evidence() -> None:

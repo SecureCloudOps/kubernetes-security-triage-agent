@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -188,6 +188,7 @@ class DeterministicScanPipeline:
         networking_client: Any | None = None,
         rbac_client: Any | None = None,
         trivy_process_runner: Callable[..., Any] | None = None,
+        trivy_severities: str | Iterable[str] | None = None,
         analyzers: Mapping[str, Any] | None = None,
         correlator: Any | None = None,
         ai_analyst: Any | None = None,
@@ -221,7 +222,8 @@ class DeterministicScanPipeline:
             rbac_client, approved_namespace=self.approved_namespace
         )
         self.trivy_collector = TrivyImageCollector(
-            process_runner=trivy_process_runner
+            process_runner=trivy_process_runner,
+            severities=trivy_severities,
         )
 
         defaults: dict[str, Any] = {
@@ -549,6 +551,7 @@ def run_scan(
     networking_client: Any | None = None,
     rbac_client: Any | None = None,
     trivy_process_runner: Callable[..., Any] | None = None,
+    trivy_severities: str | Iterable[str] | None = None,
     ai_analyst: Any | None = None,
     observed_at: datetime | str | None = None,
     ai_enabled: bool = False,
@@ -562,6 +565,7 @@ def run_scan(
         networking_client=networking_client,
         rbac_client=rbac_client,
         trivy_process_runner=trivy_process_runner,
+        trivy_severities=trivy_severities,
         ai_analyst=ai_analyst,
     ).run(
         target,

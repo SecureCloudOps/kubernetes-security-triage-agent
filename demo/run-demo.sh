@@ -43,6 +43,7 @@ run_scan() {
     --kind Deployment \
     --name "${workload}" \
     --output-dir "${output_dir}" \
+    --trivy-severity CRITICAL,HIGH \
     --fail-on none; then
     printf 'completed: %s\n' "${namespace}"
   else

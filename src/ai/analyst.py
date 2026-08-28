@@ -133,9 +133,11 @@ def _sequence(value: Any, field_name: str) -> list[Any]:
     return list(value)
 
 
-def _confirmed_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _confirmed_finding_records(
+    report: Mapping[str, Any],
+) -> list[tuple[int, str, str, Mapping[str, Any]]]:
     raw_findings = _sequence(report.get("findings", []), "findings")
-    findings: list[dict[str, Any]] = []
+    records: list[tuple[int, str, str, Mapping[str, Any]]] = []
     seen: set[str] = set()
     for index, raw in enumerate(raw_findings):
         if not isinstance(raw, Mapping):
@@ -151,6 +153,32 @@ def _confirmed_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
         if severity not in _SEVERITIES:
             raise _BoundaryError(f"findings[{index}].severity is invalid")
         seen.add(finding_id)
+        records.append((index, finding_id, severity, raw))
+    return records
+
+
+def _confirmed_findings(
+    records: list[tuple[int, str, str, Mapping[str, Any]]],
+    *,
+    required_ids: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    required = set(required_ids)
+    known_ids = {finding_id for _, finding_id, _, _ in records}
+    if not required.issubset(known_ids):
+        raise _BoundaryError("required attack-path findings are unavailable")
+    if len(required) > MAX_FINDINGS:
+        raise _BoundaryError("attack-path findings exceeded the finding limit")
+
+    selected_ids = set(required)
+    for _, finding_id, _, _ in records:
+        if len(selected_ids) >= MAX_FINDINGS:
+            break
+        selected_ids.add(finding_id)
+
+    findings: list[dict[str, Any]] = []
+    for index, finding_id, severity, raw in records:
+        if finding_id not in selected_ids:
+            continue
         findings.append(
             {
                 "finding_id": finding_id,
@@ -169,16 +197,16 @@ def _confirmed_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
                 ),
             }
         )
-        if len(findings) >= MAX_FINDINGS:
-            break
     return findings
 
 
 def _plausible_attack_paths(
     raw_paths: list[Any], *, known_finding_ids: set[str]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     paths: list[dict[str, Any]] = []
     seen: set[str] = set()
+    required_finding_ids: list[str] = []
+    required_finding_id_set: set[str] = set()
     for index, raw in enumerate(raw_paths):
         if not isinstance(raw, Mapping):
             raise _BoundaryError(f"attack_paths[{index}] must be an object")
@@ -207,6 +235,10 @@ def _plausible_attack_paths(
                 f"attack_paths[{index}] references an unknown confirmed finding"
             )
         seen.add(path_id)
+        retained_supporting = supporting[:MAX_LIST_ITEMS]
+        candidate_required = required_finding_id_set | set(retained_supporting)
+        if len(candidate_required) > MAX_FINDINGS:
+            continue
         paths.append(
             {
                 "attack_path_id": path_id,
@@ -214,7 +246,7 @@ def _plausible_attack_paths(
                 "title": _clean_text(raw.get("title"), f"attack_paths[{index}].title"),
                 "score": _score(raw.get("score"), f"attack_paths[{index}].score"),
                 "severity": severity,
-                "supporting_finding_ids": supporting[:MAX_LIST_ITEMS],
+                "supporting_finding_ids": retained_supporting,
                 "risk_factors": _clean_optional_text_list(
                     raw.get("risk_factors"), f"attack_paths[{index}].risk_factors"
                 ),
@@ -226,9 +258,13 @@ def _plausible_attack_paths(
                 ),
             }
         )
+        for finding_id in retained_supporting:
+            if finding_id not in required_finding_id_set:
+                required_finding_ids.append(finding_id)
+                required_finding_id_set.add(finding_id)
         if len(paths) >= MAX_ATTACK_PATHS:
             break
-    return paths
+    return paths, required_finding_ids
 
 
 def _evidence_gaps(report: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -256,9 +292,15 @@ def _evidence_gaps(report: Mapping[str, Any]) -> list[dict[str, str]]:
 def _payload(
     report: Mapping[str, Any], raw_paths: list[Any]
 ) -> tuple[dict[str, Any], set[str], set[str]]:
-    findings = _confirmed_findings(report)
+    finding_records = _confirmed_finding_records(report)
+    all_finding_ids = {finding_id for _, finding_id, _, _ in finding_records}
+    paths, required_finding_ids = _plausible_attack_paths(
+        raw_paths, known_finding_ids=all_finding_ids
+    )
+    findings = _confirmed_findings(
+        finding_records, required_ids=required_finding_ids
+    )
     finding_ids = {item["finding_id"] for item in findings}
-    paths = _plausible_attack_paths(raw_paths, known_finding_ids=finding_ids)
     path_ids = {item["attack_path_id"] for item in paths}
     payload = {
         "confirmed_findings": findings,

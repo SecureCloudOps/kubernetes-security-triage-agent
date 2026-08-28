@@ -76,6 +76,26 @@ def test_each_unique_vulnerability_gets_trivy_severity_and_standalone_score() ->
         _assert_schema_valid(finding)
 
 
+def test_each_finding_contains_only_its_matching_vulnerability_evidence() -> None:
+    findings = analyze_trivy(_scan(_details()))
+
+    assert len(findings) == 2
+    for finding in findings:
+        assert len(finding["evidence"]) == 1
+        details = finding["evidence"][0]["details"]
+        assert set(details) == {
+            "image",
+            "digest",
+            "vulnerability_id",
+            "severity",
+            "package",
+            "installed_version",
+            "fixed_version",
+        }
+        assert details["vulnerability_id"] in finding["title"]
+        assert "vulnerabilities" not in details
+
+
 @pytest.mark.parametrize(
     ("trivy_severity", "finding_severity", "score"),
     [
@@ -99,9 +119,7 @@ def test_all_trivy_severity_scores_are_preserved(
 
     assert finding["severity"] == finding_severity
     assert finding["score"] == score
-    assert finding["evidence"][0]["details"]["vulnerabilities"][0][
-        "severity"
-    ] == trivy_severity
+    assert finding["evidence"][0]["details"]["severity"] == trivy_severity
     _assert_schema_valid(finding)
 
 
@@ -158,6 +176,29 @@ def test_same_vulnerability_in_distinct_images_creates_distinct_findings() -> No
 
     assert len(findings) == 4
     assert len({finding["finding_id"] for finding in findings}) == 4
+
+
+def test_json_finding_size_grows_linearly_with_vulnerability_count() -> None:
+    def findings_for(count: int) -> list[dict]:
+        details = _details()
+        template = deepcopy(details["vulnerabilities"][0])
+        details["vulnerabilities"] = []
+        for number in range(count):
+            vulnerability = deepcopy(template)
+            vulnerability["vulnerability_id"] = f"CVE-2026-{number:05d}"
+            vulnerability["package_name"] = f"package-{number:05d}"
+            details["vulnerabilities"].append(vulnerability)
+        details["vulnerability_count"] = count
+        return analyze_trivy(_scan(details))
+
+    twenty = findings_for(20)
+    forty = findings_for(40)
+    twenty_size = len(json.dumps(twenty, sort_keys=True))
+    forty_size = len(json.dumps(forty, sort_keys=True))
+
+    assert len(twenty) == 20
+    assert len(forty) == 40
+    assert forty_size < twenty_size * 2.2
 
 
 def test_clean_complete_scan_creates_no_findings() -> None:

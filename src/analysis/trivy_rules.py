@@ -143,6 +143,35 @@ def _collection_status_evidence(scan: ScanResult, reason: str) -> dict[str, Any]
     }
 
 
+def _vulnerability_evidence(
+    source: Mapping[str, Any],
+    *,
+    image: str,
+    digest: str | None,
+    vulnerability: Mapping[str, str | None],
+) -> dict[str, Any]:
+    """Reduce image-level Trivy evidence to one matching vulnerability."""
+
+    return {
+        "source": _required_text(source.get("source"), "evidence.source"),
+        "observed_at": _required_text(
+            source.get("observed_at"), "evidence.observed_at"
+        ),
+        "collector_version": _required_text(
+            source.get("collector_version"), "evidence.collector_version"
+        ),
+        "details": {
+            "image": image,
+            "digest": digest,
+            "vulnerability_id": vulnerability["vulnerability_id"],
+            "severity": vulnerability["severity"],
+            "package": vulnerability["package_name"],
+            "installed_version": vulnerability["installed_version"],
+            "fixed_version": vulnerability["fixed_version"],
+        },
+    }
+
+
 class TrivyRuleEngine:
     """Convert complete Trivy scan results into one finding per unique CVE."""
 
@@ -262,6 +291,7 @@ class TrivyRuleEngine:
                 image = _required_text(
                     details.get("image_reference"), "image_reference"
                 )
+                digest = _optional_text(details.get("image_digest"), "image_digest")
                 vulnerabilities = details.get("vulnerabilities")
                 if not isinstance(vulnerabilities, list):
                     raise ValueError("vulnerabilities must be a list")
@@ -283,7 +313,15 @@ class TrivyRuleEngine:
                         vulnerability["package_name"],
                         vulnerability["installed_version"],
                     )
-                    occurrences.setdefault(key, []).append((vulnerability, evidence))
+                    vulnerability_evidence = _vulnerability_evidence(
+                        evidence,
+                        image=image,
+                        digest=digest,
+                        vulnerability=vulnerability,
+                    )
+                    occurrences.setdefault(key, []).append(
+                        (vulnerability, vulnerability_evidence)
+                    )
         except (TypeError, ValueError) as exc:
             evidence = matching_evidence + [
                 _collection_status_evidence(

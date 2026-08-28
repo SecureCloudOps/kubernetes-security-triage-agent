@@ -95,6 +95,34 @@ def test_critical_report_is_normalized_and_unfixed_vulnerability_is_kept(
 
 
 @patch("src.collectors.trivy.subprocess.run")
+def test_severity_filter_is_validated_and_forwarded_to_trivy(run: Mock) -> None:
+    run.return_value = _completed(_fixture("trivy-clean.json"))
+    image = "registry.example.com/payments/api:2.0.0"
+
+    result = TrivyImageCollector(
+        severities="critical, HIGH,critical"
+    ).collect([image], target=TARGET)
+
+    assert result.status is ScanStatus.COMPLETE
+    command = run.call_args.args[0]
+    assert command[-3:] == ["--severity", "CRITICAL,HIGH", image]
+
+
+@pytest.mark.parametrize(
+    "severities",
+    ["SEVERE", "HIGH,", "HIGH,--input=report.json", [], ["HIGH", 1]],
+)
+@patch("src.collectors.trivy.subprocess.run")
+def test_invalid_severity_filters_never_reach_trivy(
+    run: Mock, severities: object
+) -> None:
+    with pytest.raises((TypeError, ValueError), match="severity|severities"):
+        TrivyImageCollector(severities=severities)
+
+    run.assert_not_called()
+
+
+@patch("src.collectors.trivy.subprocess.run")
 def test_clean_report_is_successful_evidence_with_zero_vulnerabilities(
     run: Mock,
 ) -> None:

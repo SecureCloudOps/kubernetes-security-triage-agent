@@ -160,6 +160,41 @@ def test_success_uses_responses_structured_output_and_only_allowlisted_input(
     assert "Authorization" not in model_input
 
 
+def test_attack_path_findings_are_retained_when_report_exceeds_finding_limit() -> None:
+    report = _report()
+    template = report["findings"][0]
+    report["findings"] = []
+    for number in range(1, 102):
+        finding = deepcopy(template)
+        finding["finding_id"] = f"KSA-{number:012x}"
+        report["findings"].append(finding)
+
+    referenced_id = report["findings"][-1]["finding_id"]
+    excluded_id = report["findings"][-2]["finding_id"]
+    path = _path(supporting_id=referenced_id)
+    analysis = _valid_analysis()
+    analysis["priority_order"][1]["reference_id"] = referenced_id
+    analysis["remediation_steps"][0]["finding_ids"] = [referenced_id]
+    analysis["operator_review_notes"][0]["finding_ids"] = [referenced_id]
+    client = _client_with_output(analysis)
+
+    result = EvidenceGroundedAnalyst(client=client).analyze(report, [path])
+
+    assert result["status"] == AI_ANALYSIS_COMPLETE
+    model_input = client.responses.create.call_args.kwargs["input"]
+    encoded_payload = model_input.split("UNTRUSTED_SECURITY_DATA_JSON:\n", 1)[1]
+    payload = json.loads(encoded_payload)
+    sent_ids = {
+        finding["finding_id"] for finding in payload["confirmed_findings"]
+    }
+    assert len(sent_ids) == 100
+    assert referenced_id in sent_ids
+    assert excluded_id not in sent_ids
+    assert payload["plausible_attack_paths"][0]["supporting_finding_ids"] == [
+        referenced_id
+    ]
+
+
 def test_empty_confirmed_evidence_skips_before_the_api_call() -> None:
     client = _client_with_output(_valid_analysis())
 

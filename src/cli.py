@@ -11,6 +11,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from src.collectors.trivy import normalize_trivy_severities
 from src.pipeline import DEFAULT_REPORT_SCHEMA_PATH, DeterministicScanPipeline
 from src.reporting.markdown import redact_report, render_markdown
 
@@ -46,6 +47,13 @@ _RBAC_METHODS = frozenset(
 
 class CliError(RuntimeError):
     """A safe error whose message may be displayed to the operator."""
+
+
+def _trivy_severities(value: str) -> tuple[str, ...]:
+    try:
+        return normalize_trivy_severities(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 class ReadOnlyApiClient:
@@ -183,12 +191,17 @@ def _scan(args: argparse.Namespace) -> int:
         )
 
     cluster, clients = load_current_context()
+    pipeline_options: dict[str, Any] = {
+        "approved_namespace": allowed_namespace,
+        "apps_client": clients["apps"],
+        "networking_client": clients["networking"],
+        "rbac_client": clients["rbac"],
+    }
+    if args.trivy_severity is not None:
+        pipeline_options["trivy_severities"] = args.trivy_severity
     pipeline = DeterministicScanPipeline(
         clients["core"],
-        approved_namespace=allowed_namespace,
-        apps_client=clients["apps"],
-        networking_client=clients["networking"],
-        rbac_client=clients["rbac"],
+        **pipeline_options,
     )
     report = pipeline.run(
         {
@@ -241,6 +254,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--allowed-namespace", required=True)
     scan.add_argument("--output-dir", default="reports", type=Path)
     scan.add_argument("--fail-on", choices=FAIL_LEVELS, default="none")
+    scan.add_argument(
+        "--trivy-severity",
+        type=_trivy_severities,
+        help=(
+            "comma-separated Trivy severities: "
+            "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL (default: all)"
+        ),
+    )
     scan.add_argument(
         "--ai",
         action="store_true",
