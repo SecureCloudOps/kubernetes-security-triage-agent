@@ -1,5 +1,11 @@
 """Deterministic analysis rules for normalized security evidence."""
 
+from .correlation import (
+    CorrelationEngine,
+    analyze_correlation,
+    correlate_findings,
+    deterministic_attack_path_id,
+)
 from .exposure_rules import (
     ExposureRuleEngine,
     analyze_exposure,
@@ -32,17 +38,21 @@ from .trivy_rules import (
 )
 
 __all__ = [
+    "CorrelationEngine",
     "ExposureRuleEngine",
     "NetworkPolicyRuleEngine",
     "RBACRuleEngine",
     "SecurityContextRuleEngine",
     "TrivyRuleEngine",
     "analyze_exposure",
+    "analyze_correlation",
     "analyze_network_policy",
     "analyze_rbac",
     "analyze_security_context",
     "analyze_trivy",
     "deterministic_exposure_finding_id",
+    "correlate_findings",
+    "deterministic_attack_path_id",
     "deterministic_network_policy_finding_id",
     "deterministic_rbac_finding_id",
     "deterministic_finding_id",

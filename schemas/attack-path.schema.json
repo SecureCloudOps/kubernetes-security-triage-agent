@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/attack-path.schema.json",
+  "title": "Deterministic Kubernetes Attack Path",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "attack_path_id",
+    "status",
+    "title",
+    "score",
+    "severity",
+    "supporting_finding_ids",
+    "risk_factors",
+    "explanation",
+    "limitations"
+  ],
+  "properties": {
+    "attack_path_id": {
+      "type": "string",
+      "pattern": "^KAP-[0-9a-f]{12}$"
+    },
+    "status": { "const": "PLAUSIBLE" },
+    "title": { "type": "string", "minLength": 1 },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "severity": { "const": "high" },
+    "supporting_finding_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^KSA-[0-9a-fA-F]{12}$"
+      }
+    },
+    "risk_factors": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "explanation": { "type": "string", "minLength": 1 },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}
