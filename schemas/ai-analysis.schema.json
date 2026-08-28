@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/ai-analysis.schema.json",
+  "title": "Evidence-Grounded AI Security Analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "executive_summary",
+    "attack_path_explanations",
+    "priority_order",
+    "remediation_steps",
+    "operator_review_notes",
+    "limitations"
+  ],
+  "properties": {
+    "executive_summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "attack_path_explanations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attack_path_id", "explanation"],
+        "properties": {
+          "attack_path_id": {
+            "type": "string",
+            "pattern": "^KAP-[0-9a-f]{12}$"
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3000
+          }
+        }
+      }
+    },
+    "priority_order": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["position", "reference_type", "reference_id", "rationale"],
+        "properties": {
+          "position": { "type": "integer", "minimum": 1, "maximum": 200 },
+          "reference_type": { "enum": ["finding", "attack_path"] },
+          "reference_id": {
+            "type": "string",
+            "pattern": "^(KSA-[0-9a-fA-F]{12}|KAP-[0-9a-f]{12})$"
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "remediation_steps": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_ids", "attack_path_ids", "step"],
+        "properties": {
+          "finding_ids": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "pattern": "^KSA-[0-9a-fA-F]{12}$"
+            }
+          },
+          "attack_path_ids": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "pattern": "^KAP-[0-9a-f]{12}$"
+            }
+          },
+          "step": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "operator_review_notes": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_ids", "attack_path_ids", "note"],
+        "properties": {
+          "finding_ids": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "pattern": "^KSA-[0-9a-fA-F]{12}$"
+            }
+          },
+          "attack_path_ids": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "pattern": "^KAP-[0-9a-f]{12}$"
+            }
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    }
+  }
+}
