@@ -1,4 +1,4 @@
-"""Command-line entry point for deterministic Kubernetes security scans."""
+"""Command-line entry point for Kubernetes security scans."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ EXIT_OK = 0
 EXIT_THRESHOLD = 1
 EXIT_ERROR = 2
 EXIT_PARTIAL = 3
+EXIT_AI_FAILED = 4
 
 FAIL_LEVELS = ("critical", "high", "medium", "low", "none")
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
@@ -195,12 +196,19 @@ def _scan(args: argparse.Namespace) -> int:
             "namespace": namespace,
             "kind": kind,
             "name": name,
-        }
+        },
+        ai_enabled=args.ai,
     )
     json_path, markdown_path = _write_reports(Path(args.output_dir), report)
     print(f"JSON report: {json_path}")
     print(f"Markdown report: {markdown_path}")
 
+    if report.get("ai_status") == "FAILED":
+        print(
+            "AI analysis failed; deterministic results were preserved.",
+            file=sys.stderr,
+        )
+        return EXIT_AI_FAILED
     if report.get("scan_status") == "PARTIAL":
         print("Scan status is PARTIAL.", file=sys.stderr)
         return EXIT_PARTIAL
@@ -216,7 +224,10 @@ def _scan(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m src.cli",
-        description="Run a read-only deterministic Kubernetes workload scan.",
+        description=(
+            "Run a read-only Kubernetes workload scan with deterministic "
+            "findings and optional AI interpretation."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     scan = subparsers.add_parser("scan", help="scan one approved workload")
@@ -230,6 +241,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--allowed-namespace", required=True)
     scan.add_argument("--output-dir", default="reports", type=Path)
     scan.add_argument("--fail-on", choices=FAIL_LEVELS, default="none")
+    scan.add_argument(
+        "--ai",
+        action="store_true",
+        help="request non-authoritative AI interpretation of deterministic results",
+    )
     scan.set_defaults(handler=_scan)
     return parser
 
@@ -256,6 +272,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "EXIT_AI_FAILED",
     "EXIT_ERROR",
     "EXIT_OK",
     "EXIT_PARTIAL",

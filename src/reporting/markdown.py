@@ -123,6 +123,9 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     target = safe.get("target")
     summary = safe.get("summary")
     findings = safe.get("findings")
+    attack_paths = safe.get("attack_paths")
+    ai_status = safe.get("ai_status")
+    ai_analysis = safe.get("ai_analysis")
     gaps = safe.get("evidence_gaps")
     if not isinstance(target, Mapping):
         raise ValueError("report.target must be an object")
@@ -130,6 +133,14 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         raise ValueError("report.summary must be an object")
     if not isinstance(findings, list):
         raise ValueError("report.findings must be a list")
+    if not isinstance(attack_paths, list):
+        raise ValueError("report.attack_paths must be a list")
+    if ai_status not in {"DISABLED", "SKIPPED", "SUCCESS", "FAILED"}:
+        raise ValueError("report.ai_status is invalid")
+    if ai_status == "SUCCESS" and not isinstance(ai_analysis, Mapping):
+        raise ValueError("successful AI analysis must be an object")
+    if ai_status != "SUCCESS" and ai_analysis is not None:
+        raise ValueError("non-successful AI analysis must be null")
     if not isinstance(gaps, list):
         raise ValueError("report.evidence_gaps must be a list")
 
@@ -199,6 +210,152 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                         "",
                     ]
                 )
+
+    lines.extend(
+        [
+            "## Plausible Attack Paths",
+            "",
+            "**These are deterministic hypotheses, not collected evidence or proof of exploitation.**",
+            "",
+        ]
+    )
+    plausible = [
+        path
+        for path in attack_paths
+        if isinstance(path, Mapping) and path.get("status") == "PLAUSIBLE"
+    ]
+    if not plausible:
+        lines.extend(["No plausible attack paths were generated.", ""])
+    for path in plausible:
+        supporting = path.get("supporting_finding_ids", [])
+        supporting_text = (
+            ", ".join(str(item) for item in supporting)
+            if isinstance(supporting, list)
+            else str(supporting)
+        )
+        lines.extend(
+            [
+                f"### {_cell(path.get('attack_path_id'))}: {_cell(path.get('title'))}",
+                "",
+                "| Status | Severity | Score | Supporting confirmed findings |",
+                "| --- | --- | ---: | --- |",
+                f"| PLAUSIBLE | {_cell(path.get('severity'))} | {_cell(path.get('score'))} | {_cell(supporting_text)} |",
+                "",
+                f"**Hypothesis:** {_cell(path.get('explanation'))}",
+                "",
+            ]
+        )
+        limitations = path.get("limitations", [])
+        if isinstance(limitations, list) and limitations:
+            lines.extend(["**Limitations:**", ""])
+            lines.extend(f"- {_cell(item)}" for item in limitations)
+            lines.append("")
+
+    lines.extend(
+        [
+            "## AI Interpretation",
+            "",
+            f"**AI status:** {_cell(ai_status)}",
+            "",
+            "**AI-generated text is interpretation only. It is not collected evidence and cannot confirm exploitation.**",
+            "",
+        ]
+    )
+    if ai_status == "DISABLED":
+        lines.extend(["AI analysis was not requested.", ""])
+    elif ai_status == "SKIPPED":
+        lines.extend(
+            ["AI analysis was requested but skipped because there was nothing eligible to interpret.", ""]
+        )
+    elif ai_status == "FAILED":
+        lines.extend(
+            ["AI analysis failed. Deterministic findings and plausible paths remain unchanged.", ""]
+        )
+    elif isinstance(ai_analysis, Mapping):
+        lines.extend(
+            [
+                "### Executive Summary",
+                "",
+                f"> {_cell(ai_analysis.get('executive_summary'))}",
+                "",
+            ]
+        )
+
+        explanations = ai_analysis.get("attack_path_explanations", [])
+        lines.extend(["### Attack Path Explanations", ""])
+        if isinstance(explanations, list) and explanations:
+            lines.extend(
+                [
+                    "| Plausible path | AI explanation |",
+                    "| --- | --- |",
+                ]
+            )
+            for item in explanations:
+                if isinstance(item, Mapping):
+                    lines.append(
+                        f"| {_cell(item.get('attack_path_id'))} | {_cell(item.get('explanation'))} |"
+                    )
+            lines.append("")
+        else:
+            lines.extend(["No AI attack-path explanations were generated.", ""])
+
+        priorities = ai_analysis.get("priority_order", [])
+        lines.extend(["### AI Priority Order", ""])
+        if isinstance(priorities, list) and priorities:
+            lines.extend(
+                [
+                    "| Position | Type | Reference | Rationale |",
+                    "| ---: | --- | --- | --- |",
+                ]
+            )
+            for item in priorities:
+                if isinstance(item, Mapping):
+                    lines.append(
+                        f"| {_cell(item.get('position'))} | {_cell(item.get('reference_type'))} | {_cell(item.get('reference_id'))} | {_cell(item.get('rationale'))} |"
+                    )
+            lines.append("")
+        else:
+            lines.extend(["No AI priority order was generated.", ""])
+
+        remediation_steps = ai_analysis.get("remediation_steps", [])
+        lines.extend(["### AI Remediation Interpretation", ""])
+        if isinstance(remediation_steps, list) and remediation_steps:
+            for item in remediation_steps:
+                if not isinstance(item, Mapping):
+                    continue
+                references = list(item.get("finding_ids", [])) + list(
+                    item.get("attack_path_ids", [])
+                )
+                lines.append(
+                    f"- **{_cell(', '.join(str(value) for value in references))}:** {_cell(item.get('step'))}"
+                )
+            lines.append("")
+        else:
+            lines.extend(["No AI remediation interpretation was generated.", ""])
+
+        review_notes = ai_analysis.get("operator_review_notes", [])
+        lines.extend(["### Operator Review Notes", ""])
+        if isinstance(review_notes, list) and review_notes:
+            for item in review_notes:
+                if not isinstance(item, Mapping):
+                    continue
+                references = list(item.get("finding_ids", [])) + list(
+                    item.get("attack_path_ids", [])
+                )
+                lines.append(
+                    f"- **{_cell(', '.join(str(value) for value in references))}:** {_cell(item.get('note'))}"
+                )
+            lines.append("")
+        else:
+            lines.extend(["No operator review notes were generated.", ""])
+
+        ai_limitations = ai_analysis.get("limitations", [])
+        lines.extend(["### AI Limitations", ""])
+        if isinstance(ai_limitations, list) and ai_limitations:
+            lines.extend(f"- {_cell(item)}" for item in ai_limitations)
+            lines.append("")
+        else:
+            lines.extend(["No additional AI limitations were generated.", ""])
 
     lines.extend(["## Recommendations", ""])
     recommendation_rows: list[tuple[str, str]] = []

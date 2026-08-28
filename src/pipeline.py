@@ -1,4 +1,4 @@
-"""Deterministic orchestration for one read-only Kubernetes security scan."""
+"""Evidence-first orchestration for one read-only Kubernetes security scan."""
 
 from __future__ import annotations
 
@@ -11,6 +11,13 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from src.ai.analyst import (
+    AI_ANALYSIS_COMPLETE,
+    AI_ANALYSIS_FAILED,
+    AI_ANALYSIS_SKIPPED,
+    EvidenceGroundedAnalyst,
+)
+from src.analysis.correlation import correlate_findings
 from src.analysis.exposure_rules import analyze_exposure
 from src.analysis.network_policy_rules import analyze_network_policy
 from src.analysis.rbac_rules import analyze_rbac
@@ -44,6 +51,15 @@ SECONDARY_COLLECTORS = (
 ANALYZERS = SECONDARY_COLLECTORS
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 _SEVERITY_RANK = {severity: index for index, severity in enumerate(SEVERITIES)}
+_AI_STATUS_MAP = {
+    AI_ANALYSIS_COMPLETE: "SUCCESS",
+    AI_ANALYSIS_SKIPPED: "SKIPPED",
+    AI_ANALYSIS_FAILED: "FAILED",
+    # These values make injected analyst doubles easier to use while the
+    # built-in adapter retains its existing public result constants.
+    "SUCCESS": "SUCCESS",
+    "FAILED": "FAILED",
+}
 
 
 class WorkloadCollectionError(RuntimeError):
@@ -173,6 +189,8 @@ class DeterministicScanPipeline:
         rbac_client: Any | None = None,
         trivy_process_runner: Callable[..., Any] | None = None,
         analyzers: Mapping[str, Any] | None = None,
+        correlator: Any | None = None,
+        ai_analyst: Any | None = None,
         report_schema_path: str | Path | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -219,6 +237,16 @@ class DeterministicScanPipeline:
                 raise ValueError("unknown analyzers: " + ", ".join(unknown))
             defaults.update(analyzers)
         self.analyzers = defaults
+        self.correlator = correlator or correlate_findings
+        if not callable(self.correlator) and not callable(
+            getattr(self.correlator, "correlate", None)
+        ):
+            raise TypeError("correlator must be callable or expose correlate()")
+        if ai_analyst is not None and not callable(
+            getattr(ai_analyst, "analyze", None)
+        ):
+            raise TypeError("ai_analyst must expose analyze()")
+        self.ai_analyst = ai_analyst
 
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         if not callable(self._clock):
@@ -235,8 +263,16 @@ class DeterministicScanPipeline:
         target: Target | Mapping[str, Any],
         *,
         observed_at: datetime | str | None = None,
+        ai_enabled: bool = False,
     ) -> dict[str, Any]:
-        """Run one scan. Primary collection failure raises and stops execution."""
+        """Run one scan. Primary collection failure raises and stops execution.
+
+        Correlation is always deterministic. AI interpretation is opt-in and is
+        never allowed to replace or mutate collected findings or plausible paths.
+        """
+
+        if not isinstance(ai_enabled, bool):
+            raise TypeError("ai_enabled must be a boolean")
 
         scan_target = _target(target)
         if scan_target.namespace != self.approved_namespace:
@@ -338,16 +374,24 @@ class DeterministicScanPipeline:
         for finding in findings:
             summary[finding["severity"]] += 1
 
-        report = {
+        report: dict[str, Any] = {
             "scan_status": scan_status,
             "target": scan_target.to_dict(),
             "collector_status": collector_status,
             "analyzer_status": analyzer_status,
             "findings": findings,
+            "attack_paths": [],
+            "ai_status": "DISABLED",
+            "ai_analysis": None,
             "evidence_gaps": evidence_gaps,
             "summary": summary,
         }
+
+        report["attack_paths"] = self._correlate(report)
         self._validator.validate(report)
+        if ai_enabled:
+            report = self._apply_ai_analysis(report)
+            self._validator.validate(report)
         return report
 
     scan = run
@@ -357,17 +401,58 @@ class DeterministicScanPipeline:
         target: Target | Mapping[str, Any],
         *,
         observed_at: datetime | str | None = None,
+        ai_enabled: bool = False,
         indent: int | None = None,
     ) -> str:
         """Run one scan and serialize the report with stable key ordering."""
 
         return json.dumps(
-            self.run(target, observed_at=observed_at),
+            self.run(
+                target,
+                observed_at=observed_at,
+                ai_enabled=ai_enabled,
+            ),
             ensure_ascii=False,
             sort_keys=True,
             indent=indent,
             separators=None if indent is not None else (",", ":"),
         )
+
+    def _correlate(self, report: Mapping[str, Any]) -> list[dict[str, Any]]:
+        correlate = getattr(self.correlator, "correlate", self.correlator)
+        produced = correlate(deepcopy(report))
+        if not isinstance(produced, list) or not all(
+            isinstance(path, Mapping) for path in produced
+        ):
+            raise TypeError("correlator output must be a list of objects")
+        return [deepcopy(dict(path)) for path in produced]
+
+    def _apply_ai_analysis(self, report: dict[str, Any]) -> dict[str, Any]:
+        """Add non-authoritative AI output while preserving deterministic data."""
+
+        analyst = self.ai_analyst or EvidenceGroundedAnalyst()
+        try:
+            result = analyst.analyze(
+                deepcopy(report), deepcopy(report["attack_paths"])
+            )
+            if not isinstance(result, Mapping):
+                raise TypeError("AI analyst output must be an object")
+            ai_status = _AI_STATUS_MAP.get(result.get("status"), "FAILED")
+            ai_analysis = (
+                deepcopy(result.get("analysis"))
+                if ai_status == "SUCCESS"
+                else None
+            )
+            candidate = deepcopy(report)
+            candidate["ai_status"] = ai_status
+            candidate["ai_analysis"] = ai_analysis
+            self._validator.validate(candidate)
+            return candidate
+        except Exception:
+            failed = deepcopy(report)
+            failed["ai_status"] = "FAILED"
+            failed["ai_analysis"] = None
+            return failed
 
     def _collect_secondary(
         self,
@@ -464,7 +549,9 @@ def run_scan(
     networking_client: Any | None = None,
     rbac_client: Any | None = None,
     trivy_process_runner: Callable[..., Any] | None = None,
+    ai_analyst: Any | None = None,
     observed_at: datetime | str | None = None,
+    ai_enabled: bool = False,
 ) -> dict[str, Any]:
     """Construct a pipeline from injected dependencies and run one scan."""
 
@@ -475,7 +562,12 @@ def run_scan(
         networking_client=networking_client,
         rbac_client=rbac_client,
         trivy_process_runner=trivy_process_runner,
-    ).run(target, observed_at=observed_at)
+        ai_analyst=ai_analyst,
+    ).run(
+        target,
+        observed_at=observed_at,
+        ai_enabled=ai_enabled,
+    )
 
 
 __all__ = [

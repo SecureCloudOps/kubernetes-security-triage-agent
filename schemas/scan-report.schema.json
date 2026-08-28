@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/schemas/scan-report.schema.json",
-  "title": "Deterministic Kubernetes Security Scan Report",
+  "title": "Kubernetes Security Scan Report",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,6 +10,9 @@
     "collector_status",
     "analyzer_status",
     "findings",
+    "attack_paths",
+    "ai_status",
+    "ai_analysis",
     "evidence_gaps",
     "summary"
   ],
@@ -57,6 +60,19 @@
     "findings": {
       "type": "array",
       "items": { "$ref": "#/$defs/finding" }
+    },
+    "attack_paths": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/attackPath" }
+    },
+    "ai_status": {
+      "enum": ["DISABLED", "SKIPPED", "SUCCESS", "FAILED"]
+    },
+    "ai_analysis": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/aiAnalysis" }
+      ]
     },
     "evidence_gaps": {
       "type": "array",
@@ -107,6 +123,22 @@
       },
       "else": {
         "properties": { "evidence_gaps": { "minItems": 1 } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "ai_status": { "const": "SUCCESS" } },
+        "required": ["ai_status"]
+      },
+      "then": {
+        "properties": {
+          "ai_analysis": { "$ref": "#/$defs/aiAnalysis" }
+        }
+      },
+      "else": {
+        "properties": {
+          "ai_analysis": { "type": "null" }
+        }
       }
     }
   ],
@@ -198,6 +230,173 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
         }
+      }
+    },
+    "attackPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attack_path_id",
+        "status",
+        "title",
+        "score",
+        "severity",
+        "supporting_finding_ids",
+        "risk_factors",
+        "explanation",
+        "limitations"
+      ],
+      "properties": {
+        "attack_path_id": {
+          "type": "string",
+          "pattern": "^KAP-[0-9a-f]{12}$"
+        },
+        "status": { "const": "PLAUSIBLE" },
+        "title": { "type": "string", "minLength": 1 },
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "severity": { "const": "high" },
+        "supporting_finding_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^KSA-[0-9a-fA-F]{12}$"
+          }
+        },
+        "risk_factors": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "explanation": { "type": "string", "minLength": 1 },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "aiAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executive_summary",
+        "attack_path_explanations",
+        "priority_order",
+        "remediation_steps",
+        "operator_review_notes",
+        "limitations"
+      ],
+      "properties": {
+        "executive_summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "attack_path_explanations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attack_path_id", "explanation"],
+            "properties": {
+              "attack_path_id": {
+                "type": "string",
+                "pattern": "^KAP-[0-9a-f]{12}$"
+              },
+              "explanation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              }
+            }
+          }
+        },
+        "priority_order": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "position",
+              "reference_type",
+              "reference_id",
+              "rationale"
+            ],
+            "properties": {
+              "position": { "type": "integer", "minimum": 1, "maximum": 200 },
+              "reference_type": { "enum": ["finding", "attack_path"] },
+              "reference_id": {
+                "type": "string",
+                "pattern": "^(KSA-[0-9a-fA-F]{12}|KAP-[0-9a-f]{12})$"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            }
+          }
+        },
+        "remediation_steps": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/aiReferencedStep" }
+        },
+        "operator_review_notes": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["finding_ids", "attack_path_ids", "note"],
+            "properties": {
+              "finding_ids": { "$ref": "#/$defs/findingIds" },
+              "attack_path_ids": { "$ref": "#/$defs/attackPathIds" },
+              "note": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            }
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
+    "aiReferencedStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_ids", "attack_path_ids", "step"],
+      "properties": {
+        "finding_ids": { "$ref": "#/$defs/findingIds" },
+        "attack_path_ids": { "$ref": "#/$defs/attackPathIds" },
+        "step": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "findingIds": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "pattern": "^KSA-[0-9a-fA-F]{12}$"
+      }
+    },
+    "attackPathIds": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "pattern": "^KAP-[0-9a-f]{12}$"
       }
     },
     "evidenceGap": {

@@ -68,6 +68,9 @@ def _report() -> dict:
                 ],
             }
         ],
+        "attack_paths": [],
+        "ai_status": "DISABLED",
+        "ai_analysis": None,
         "evidence_gaps": [],
         "summary": {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0},
     }
@@ -80,6 +83,8 @@ def test_markdown_contains_required_sections_and_traceable_evidence() -> None:
         "## Target and Scan Status",
         "## Severity Summary",
         "## Confirmed Findings",
+        "## Plausible Attack Paths",
+        "## AI Interpretation",
         "#### Evidence",
         "## Recommendations",
         "## Evidence Gaps",
@@ -90,6 +95,70 @@ def test_markdown_contains_required_sections_and_traceable_evidence() -> None:
     assert "kubernetes.security_context" in markdown
     assert "No exploitation was confirmed" in markdown
     assert "vulnerable-api" in markdown
+    assert "AI analysis was not requested" in markdown
+
+
+def test_plausible_paths_and_ai_interpretation_are_separate_from_evidence() -> None:
+    report = _report()
+    finding_id = report["findings"][0]["finding_id"]
+    path_id = "KAP-0123456789ab"
+    report["attack_paths"] = [
+        {
+            "attack_path_id": path_id,
+            "status": "PLAUSIBLE",
+            "title": "Exposure may combine with workload weakness",
+            "score": 55,
+            "severity": "high",
+            "supporting_finding_ids": [finding_id],
+            "risk_factors": ["public_exposure", "high_cve"],
+            "explanation": "The confirmed signals form a plausible sequence.",
+            "limitations": ["This does not establish exploitation."],
+        }
+    ]
+    report["ai_status"] = "SUCCESS"
+    report["ai_analysis"] = {
+        "executive_summary": "Prioritize review of the plausible sequence.",
+        "attack_path_explanations": [
+            {
+                "attack_path_id": path_id,
+                "explanation": "The path links the supplied deterministic signals.",
+            }
+        ],
+        "priority_order": [
+            {
+                "position": 1,
+                "reference_type": "attack_path",
+                "reference_id": path_id,
+                "rationale": "It combines multiple conditions.",
+            }
+        ],
+        "remediation_steps": [
+            {
+                "finding_ids": [finding_id],
+                "attack_path_ids": [path_id],
+                "step": "Restrict exposure and remediate the workload weakness.",
+            }
+        ],
+        "operator_review_notes": [
+            {
+                "finding_ids": [finding_id],
+                "attack_path_ids": [],
+                "note": "Confirm whether exposure is intended.",
+            }
+        ],
+        "limitations": ["AI output is interpretive and not evidence."],
+    }
+
+    markdown = render_markdown(report)
+
+    confirmed_index = markdown.index("## Confirmed Findings")
+    plausible_index = markdown.index("## Plausible Attack Paths")
+    ai_index = markdown.index("## AI Interpretation")
+    assert confirmed_index < plausible_index < ai_index
+    assert "deterministic hypotheses, not collected evidence" in markdown
+    assert "AI-generated text is interpretation only" in markdown
+    assert path_id in markdown
+    assert "Prioritize review" in markdown
 
 
 def test_markdown_and_redacted_json_never_include_credential_values() -> None:

@@ -74,6 +74,9 @@ def _report(*, status: str = "COMPLETE", severity: str = "high") -> dict:
             "trivy": "COMPLETE",
         },
         "findings": [finding],
+        "attack_paths": [],
+        "ai_status": "DISABLED",
+        "ai_analysis": None,
         "evidence_gaps": gaps,
         "summary": summary,
     }
@@ -85,6 +88,7 @@ def _run_with_mocks(
     report: dict,
     *,
     fail_on: str = "none",
+    ai: bool = False,
 ) -> tuple[int, Mock]:
     kubernetes_clients = {
         "core": Mock(name="CoreV1Api"),
@@ -102,23 +106,24 @@ def _run_with_mocks(
     pipeline_factory = Mock(return_value=pipeline)
     monkeypatch.setattr(cli, "DeterministicScanPipeline", pipeline_factory)
 
-    code = cli.main(
-        [
-            "scan",
-            "--namespace",
-            "demo",
-            "--kind",
-            "Deployment",
-            "--name",
-            "vulnerable-api",
-            "--allowed-namespace",
-            "demo",
-            "--output-dir",
-            str(tmp_path),
-            "--fail-on",
-            fail_on,
-        ]
-    )
+    arguments = [
+        "scan",
+        "--namespace",
+        "demo",
+        "--kind",
+        "Deployment",
+        "--name",
+        "vulnerable-api",
+        "--allowed-namespace",
+        "demo",
+        "--output-dir",
+        str(tmp_path),
+        "--fail-on",
+        fail_on,
+    ]
+    if ai:
+        arguments.append("--ai")
+    code = cli.main(arguments)
     return code, pipeline
 
 
@@ -134,7 +139,8 @@ def test_scan_writes_matching_valid_json_and_markdown_with_mocked_dependencies(
             "namespace": "demo",
             "kind": "Deployment",
             "name": "vulnerable-api",
-        }
+        },
+        ai_enabled=False,
     )
     written = json.loads((tmp_path / "scan-report.json").read_text(encoding="utf-8"))
     markdown = (tmp_path / "scan-report.md").read_text(encoding="utf-8")
@@ -263,6 +269,34 @@ def test_partial_scan_writes_reports_and_returns_distinct_nonzero_exit(
     assert code == cli.EXIT_PARTIAL
     assert (tmp_path / "scan-report.json").exists()
     assert "PARTIAL" in (tmp_path / "scan-report.md").read_text(encoding="utf-8")
+
+
+def test_ai_flag_is_forwarded_and_ai_failure_writes_reports_before_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _report()
+    report["ai_status"] = "FAILED"
+
+    code, pipeline = _run_with_mocks(
+        monkeypatch, tmp_path, report, ai=True
+    )
+
+    assert code == cli.EXIT_AI_FAILED
+    pipeline.run.assert_called_once_with(
+        {
+            "cluster": "test-cluster",
+            "namespace": "demo",
+            "kind": "Deployment",
+            "name": "vulnerable-api",
+        },
+        ai_enabled=True,
+    )
+    written = json.loads(
+        (tmp_path / "scan-report.json").read_text(encoding="utf-8")
+    )
+    assert written["ai_status"] == "FAILED"
+    assert written["findings"] == report["findings"]
+    assert (tmp_path / "scan-report.md").exists()
 
 
 def test_invalid_report_is_rejected_before_either_file_is_written(
