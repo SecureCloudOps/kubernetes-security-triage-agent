@@ -1,0 +1,71 @@
+{
+  "sample_type": "sanitized_report_excerpt",
+  "source_scan": {
+    "date": "2026-08-29",
+    "target": {
+      "cluster": "ksta-demo",
+      "namespace": "vulnerable-demo",
+      "kind": "Deployment",
+      "name": "vulnerable-web"
+    },
+    "scan_status": "COMPLETE",
+    "summary": {
+      "critical": 39,
+      "high": 127,
+      "medium": 1,
+      "low": 7,
+      "info": 0
+    },
+    "confirmed_finding_count": 174,
+    "plausible_attack_path_count": 3,
+    "ai_status": "DISABLED"
+  },
+  "confirmed_finding": {
+    "finding_id": "KSA-019343407670",
+    "status": "CONFIRMED",
+    "severity": "critical",
+    "score": 80,
+    "confidence": "high",
+    "title": "CVE-2020-36330 affects libwebp6 in nginx:1.16.1",
+    "risk_factors": [
+      "critical_cve"
+    ],
+    "evidence": {
+      "source": "trivy",
+      "collector_version": "1.0.0",
+      "details": {
+        "image": "nginx:1.16.1",
+        "digest": "sha256:d20aa6d1cae56fd17cd458f4807e0de462caf2336f0b70b5eeb69fcaaf30dd9c",
+        "vulnerability_id": "CVE-2020-36330",
+        "package": "libwebp6",
+        "installed_version": "0.6.1-2",
+        "fixed_version": "0.6.1-2+deb10u1",
+        "severity": "CRITICAL"
+      }
+    },
+    "limitation": "The package vulnerability does not establish runtime reachability or exploitability."
+  },
+  "plausible_attack_path": {
+    "attack_path_id": "KAP-a4b87e1a0758",
+    "status": "PLAUSIBLE",
+    "severity": "high",
+    "score": 55,
+    "title": "External exposure combines with privileged or root execution",
+    "risk_factors": [
+      "potential_external_exposure",
+      "privileged_container",
+      "runs_as_root"
+    ],
+    "supporting_finding_ids": [
+      "KSA-1dbd461da1ee",
+      "KSA-9be86b799ad2",
+      "KSA-a73b08015702",
+      "KSA-af8391bac564"
+    ],
+    "limitation": "NodePort is potentially external; public reachability, access, compromise, and exploitation were not confirmed."
+  },
+  "notes": [
+    "This committed file is a shortened, sanitized excerpt rather than a complete schema-valid runtime report.",
+    "AI analysis was validated separately and is not represented as evidence in this excerpt."
+  ]
+}
