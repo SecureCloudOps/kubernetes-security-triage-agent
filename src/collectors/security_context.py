@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from src.models import Evidence
+from src.models import Evidence, Target
 
 COLLECTOR_VERSION = "1.0.0"
 EVIDENCE_SOURCE = "kubernetes.security_context"
@@ -25,11 +25,31 @@ _WORKLOAD_POD_SPEC_PATHS: dict[str, tuple[str, ...]] = {
     "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
 }
 
-_CONTAINER_GROUPS: tuple[tuple[str, str], ...] = (
-    ("containers", "container"),
-    ("initContainers", "initContainer"),
-    ("ephemeralContainers", "ephemeralContainer"),
+_CONTAINER_GROUPS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("containers",), "container"),
+    (("initContainers", "init_containers"), "initContainer"),
+    (("ephemeralContainers", "ephemeral_containers"), "ephemeralContainer"),
 )
+
+_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "securityContext": ("securityContext", "security_context"),
+    "runAsNonRoot": ("runAsNonRoot", "run_as_non_root"),
+    "runAsUser": ("runAsUser", "run_as_user"),
+    "allowPrivilegeEscalation": (
+        "allowPrivilegeEscalation",
+        "allow_privilege_escalation",
+    ),
+    "readOnlyRootFilesystem": (
+        "readOnlyRootFilesystem",
+        "read_only_root_filesystem",
+    ),
+    "seccompProfile": ("seccompProfile", "seccomp_profile"),
+    "hostNetwork": ("hostNetwork", "host_network"),
+    "hostPID": ("hostPID", "host_pid"),
+    "hostIPC": ("hostIPC", "host_ipc"),
+}
+
+_MISSING = object()
 
 
 def _mapping(value: Any, field_path: str) -> Mapping[str, Any]:
@@ -38,7 +58,7 @@ def _mapping(value: Any, field_path: str) -> Mapping[str, Any]:
     return value
 
 
-def _pod_spec(workload: Mapping[str, Any], kind: str) -> Mapping[str, Any]:
+def _manifest_pod_spec(workload: Mapping[str, Any], kind: str) -> Mapping[str, Any]:
     try:
         path = _WORKLOAD_POD_SPEC_PATHS[kind]
     except KeyError as exc:
@@ -65,6 +85,19 @@ def _optional_context(value: Any, field_path: str) -> Mapping[str, Any]:
     return _mapping(value, field_path)
 
 
+def _field(
+    value: Mapping[str, Any], names: tuple[str, ...], *, default: Any = None
+) -> Any:
+    for name in names:
+        if name in value:
+            return value[name]
+    return default
+
+
+def _setting(value: Mapping[str, Any], name: str, *, default: Any = None) -> Any:
+    return _field(value, _FIELD_ALIASES.get(name, (name,)), default=default)
+
+
 def _effective_setting(
     name: str,
     container_context: Mapping[str, Any],
@@ -72,13 +105,14 @@ def _effective_setting(
 ) -> Any:
     """Return a container override, a pod default, or ``None`` when absent."""
 
-    if name in container_context:
-        return container_context[name]
-    return pod_context.get(name)
+    container_value = _setting(container_context, name, default=_MISSING)
+    if container_value is not _MISSING and container_value is not None:
+        return container_value
+    return _setting(pod_context, name)
 
 
 def _capabilities(container_context: Mapping[str, Any]) -> dict[str, Any]:
-    raw_capabilities = container_context.get("capabilities")
+    raw_capabilities = _setting(container_context, "capabilities")
     if raw_capabilities is None:
         return {"add": None, "drop": None}
 
@@ -107,12 +141,12 @@ class SecurityContextCollector:
 
     def collect(
         self,
-        workload: Mapping[str, Any],
+        pod_spec: Mapping[str, Any],
         *,
-        cluster: str = "unknown",
+        target: Target,
         observed_at: datetime | str | None = None,
     ) -> list[Evidence]:
-        """Inspect a parsed Kubernetes workload without contacting a cluster.
+        """Inspect a normalized pod spec without contacting a cluster.
 
         Container-level values override the pod security context for the three
         settings Kubernetes allows at both levels: ``runAsNonRoot``,
@@ -121,23 +155,18 @@ class SecurityContextCollector:
         explicit ``false`` value.
         """
 
-        workload = _mapping(workload, "workload")
-        kind = _required_text(workload.get("kind"), "kind")
-        metadata = _mapping(workload.get("metadata"), "metadata")
-        name = _required_text(metadata.get("name"), "metadata.name")
-        namespace = metadata.get("namespace", "unknown")
-        namespace = _required_text(namespace, "metadata.namespace")
-        cluster = _required_text(cluster, "cluster")
-
-        pod_spec = _pod_spec(workload, kind)
+        pod_spec = _mapping(pod_spec, "pod_spec")
+        if not isinstance(target, Target):
+            raise TypeError("target must be a Target")
         pod_context = _optional_context(
-            pod_spec.get("securityContext"), "podSpec.securityContext"
+            _setting(pod_spec, "securityContext"), "podSpec.securityContext"
         )
         timestamp = observed_at or datetime.now(timezone.utc)
 
         evidence: list[Evidence] = []
-        for group_name, container_type in _CONTAINER_GROUPS:
-            raw_containers = pod_spec.get(group_name, [])
+        for group_names, container_type in _CONTAINER_GROUPS:
+            group_name = group_names[0]
+            raw_containers = _field(pod_spec, group_names, default=[])
             if raw_containers is None:
                 raw_containers = []
             if not isinstance(raw_containers, list):
@@ -151,41 +180,41 @@ class SecurityContextCollector:
                     container.get("name"), f"podSpec.{group_name}[{index}].name"
                 )
                 container_context = _optional_context(
-                    container.get("securityContext"),
+                    _setting(container, "securityContext"),
                     f"podSpec.{group_name}[{index}].securityContext",
                 )
 
                 details = {
                     "workload": {
-                        "cluster": cluster,
-                        "namespace": namespace,
-                        "kind": kind,
-                        "name": name,
+                        "cluster": target.cluster,
+                        "namespace": target.namespace,
+                        "kind": target.kind,
+                        "name": target.name,
                     },
                     "container": {
                         "name": container_name,
                         "type": container_type,
                     },
-                    "privileged": container_context.get("privileged"),
+                    "privileged": _setting(container_context, "privileged"),
                     "runAsNonRoot": _effective_setting(
                         "runAsNonRoot", container_context, pod_context
                     ),
                     "runAsUser": _effective_setting(
                         "runAsUser", container_context, pod_context
                     ),
-                    "allowPrivilegeEscalation": container_context.get(
-                        "allowPrivilegeEscalation"
+                    "allowPrivilegeEscalation": _setting(
+                        container_context, "allowPrivilegeEscalation"
                     ),
-                    "readOnlyRootFilesystem": container_context.get(
-                        "readOnlyRootFilesystem"
+                    "readOnlyRootFilesystem": _setting(
+                        container_context, "readOnlyRootFilesystem"
                     ),
                     "capabilities": _capabilities(container_context),
                     "seccompProfile": _effective_setting(
                         "seccompProfile", container_context, pod_context
                     ),
-                    "hostNetwork": pod_spec.get("hostNetwork"),
-                    "hostPID": pod_spec.get("hostPID"),
-                    "hostIPC": pod_spec.get("hostIPC"),
+                    "hostNetwork": _setting(pod_spec, "hostNetwork"),
+                    "hostPID": _setting(pod_spec, "hostPID"),
+                    "hostIPC": _setting(pod_spec, "hostIPC"),
                 }
                 evidence.append(
                     Evidence(
@@ -205,10 +234,23 @@ def collect_security_context(
     cluster: str = "unknown",
     observed_at: datetime | str | None = None,
 ) -> list[Evidence]:
-    """Convenience wrapper around :class:`SecurityContextCollector`."""
+    """Collect from a manifest while preserving the normalized collector contract."""
+
+    workload = _mapping(workload, "workload")
+    kind = _required_text(workload.get("kind"), "kind")
+    metadata = _mapping(workload.get("metadata"), "metadata")
+    target = Target(
+        cluster=_required_text(cluster, "cluster"),
+        namespace=_required_text(
+            metadata.get("namespace", "unknown"), "metadata.namespace"
+        ),
+        kind=kind,
+        name=_required_text(metadata.get("name"), "metadata.name"),
+    )
+    pod_spec = _manifest_pod_spec(workload, kind)
 
     return SecurityContextCollector().collect(
-        workload,
-        cluster=cluster,
+        pod_spec,
+        target=target,
         observed_at=observed_at,
     )

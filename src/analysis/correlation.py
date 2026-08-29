@@ -38,6 +38,10 @@ _PARTIAL_LIMITATION = (
     "The scan was partial; unavailable evidence may change this attack-path "
     "assessment."
 )
+_POTENTIAL_EXPOSURE_LIMITATION = (
+    "The exposure signal is potentially external; public reachability was not "
+    "confirmed."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +334,16 @@ class CorrelationEngine:
                 score = min(
                     100, sum(self.weights[factor] for factor in matched_factors)
                 )
+                explanation = rule.explanation
+                path_limitations = limitations.copy()
+                if (
+                    "potential_external_exposure" in matched_factors
+                    and "public_exposure" not in matched_factors
+                ):
+                    explanation = " ".join(
+                        [explanation, _POTENTIAL_EXPOSURE_LIMITATION]
+                    )
+                    path_limitations.append(_POTENTIAL_EXPOSURE_LIMITATION)
                 path = AttackPath(
                     attack_path_id=deterministic_attack_path_id(
                         rule_id=rule.rule_id,
@@ -343,8 +357,8 @@ class CorrelationEngine:
                     severity="high",
                     supporting_finding_ids=supporting_ids,
                     risk_factors=matched_factors,
-                    explanation=rule.explanation,
-                    limitations=limitations.copy(),
+                    explanation=explanation,
+                    limitations=path_limitations,
                 ).to_dict()
                 self._validator.validate(path)
                 paths.append((workload, rule_index, path))

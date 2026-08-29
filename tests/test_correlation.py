@@ -88,6 +88,20 @@ def test_unconfirmed_and_isolated_findings_never_create_paths() -> None:
     assert correlate_findings(findings) == []
 
 
+def test_potential_external_exposure_remains_explicitly_unconfirmed_in_path() -> None:
+    path = correlate_findings(
+        [
+            _finding(1, "potential_external_exposure"),
+            _finding(2, "critical_cve"),
+        ]
+    )[0]
+
+    assert "potential_external_exposure" in path["risk_factors"]
+    assert "public_exposure" not in path["risk_factors"]
+    narrative = " ".join([path["explanation"], *path["limitations"]]).lower()
+    assert "public reachability was not confirmed" in narrative
+
+
 def test_findings_from_different_workloads_are_not_related() -> None:
     other = {**TARGET, "name": "unrelated-api"}
 

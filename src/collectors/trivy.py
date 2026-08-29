@@ -195,6 +195,21 @@ def parse_trivy_report(
         raise ValueError("Trivy output must be a JSON object")
 
     raw_results = report.get("Results")
+    if raw_results is None:
+        schema_version = report.get("SchemaVersion")
+        artifact_name = report.get("ArtifactName")
+        artifact_type = report.get("ArtifactType")
+        if (
+            isinstance(schema_version, int)
+            and not isinstance(schema_version, bool)
+            and schema_version > 0
+            and isinstance(artifact_name, str)
+            and artifact_name.strip()
+            and artifact_type == "container_image"
+        ):
+            # Trivy omits Results entirely when a successful severity-filtered
+            # image scan has no matching vulnerabilities.
+            raw_results = []
     if not isinstance(raw_results, list):
         raise ValueError("Trivy report Results must be a list")
 

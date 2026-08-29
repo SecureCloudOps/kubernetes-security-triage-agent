@@ -135,6 +135,29 @@ def test_clean_report_is_successful_evidence_with_zero_vulnerabilities(
     assert result.status is ScanStatus.COMPLETE
     assert len(result.evidence) == 1
     assert result.evidence[0].details["vulnerability_count"] == 0
+
+
+@patch("src.collectors.trivy.subprocess.run")
+def test_successful_filtered_report_without_results_is_clean(run: Mock) -> None:
+    image = "busybox:1.37.0"
+    run.return_value = _completed(
+        json.dumps(
+            {
+                "SchemaVersion": 2,
+                "ArtifactID": "sha256:abc",
+                "ArtifactName": image,
+                "ArtifactType": "container_image",
+                "Metadata": {"RepoDigests": ["busybox@sha256:def"]},
+            }
+        )
+    )
+
+    result = TrivyImageCollector(severities="CRITICAL,HIGH").collect(
+        [image], target=TARGET
+    )
+
+    assert result.status is ScanStatus.COMPLETE
+    assert result.evidence[0].details["vulnerability_count"] == 0
     assert result.evidence[0].details["vulnerabilities"] == []
 
 

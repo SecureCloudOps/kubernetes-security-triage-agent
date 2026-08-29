@@ -12,7 +12,6 @@
     "findings",
     "attack_paths",
     "ai_status",
-    "ai_analysis",
     "evidence_gaps",
     "summary"
   ],
@@ -68,12 +67,8 @@
     "ai_status": {
       "enum": ["DISABLED", "SKIPPED", "SUCCESS", "FAILED"]
     },
-    "ai_analysis": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/aiAnalysis" }
-      ]
-    },
+    "ai_analysis": { "$ref": "#/$defs/aiAnalysis" },
+    "ai_error": { "$ref": "#/$defs/aiError" },
     "evidence_gaps": {
       "type": "array",
       "items": { "$ref": "#/$defs/evidenceGap" }
@@ -131,13 +126,39 @@
         "required": ["ai_status"]
       },
       "then": {
+        "required": ["ai_analysis"],
         "properties": {
           "ai_analysis": { "$ref": "#/$defs/aiAnalysis" }
-        }
+        },
+        "not": { "required": ["ai_error"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "ai_status": { "const": "FAILED" } },
+        "required": ["ai_status"]
       },
-      "else": {
+      "then": {
+        "required": ["ai_error"],
         "properties": {
-          "ai_analysis": { "type": "null" }
+          "ai_error": { "$ref": "#/$defs/aiError" }
+        },
+        "not": { "required": ["ai_analysis"] }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ai_status": { "enum": ["DISABLED", "SKIPPED"] }
+        },
+        "required": ["ai_status"]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["ai_analysis"] },
+            { "required": ["ai_error"] }
+          ]
         }
       }
     }
@@ -372,6 +393,75 @@
           "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
         }
       }
+    },
+    "aiError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "code", "message"],
+          "properties": {
+            "stage": { "const": "configuration" },
+            "code": { "const": "CONFIGURATION_FAILED" },
+            "message": { "const": "AI analysis configuration failed." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "code", "message"],
+          "properties": {
+            "stage": { "const": "api" },
+            "code": { "const": "API_FAILED" },
+            "message": { "const": "AI API request failed." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "code", "message", "reason"],
+          "properties": {
+            "stage": { "const": "response" },
+            "code": { "const": "INCOMPLETE_RESPONSE" },
+            "message": { "const": "Model response was incomplete." },
+            "reason": {
+              "enum": ["max_output_tokens", "content_filter", "unknown"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "code", "message"],
+          "properties": {
+            "stage": { "const": "schema" },
+            "code": { "const": "SCHEMA_VALIDATION_FAILED" },
+            "message": { "const": "Model response failed schema validation." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "code", "message"],
+          "properties": {
+            "stage": { "const": "reference" },
+            "code": { "const": "REFERENCE_VALIDATION_FAILED" },
+            "message": {
+              "const": "Model response referenced unknown or invalid evidence."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "code", "message"],
+          "properties": {
+            "stage": { "const": "safety" },
+            "code": { "const": "SAFETY_VALIDATION_FAILED" },
+            "message": { "const": "Model response failed safety validation." }
+          }
+        }
+      ]
     },
     "aiReferencedStep": {
       "type": "object",

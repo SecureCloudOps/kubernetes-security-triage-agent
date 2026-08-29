@@ -145,7 +145,8 @@ def test_one_call_returns_a_schema_valid_deterministic_complete_report() -> None
     assert first["evidence_gaps"] == []
     assert first["attack_paths"] == []
     assert first["ai_status"] == "DISABLED"
-    assert first["ai_analysis"] is None
+    assert "ai_analysis" not in first
+    assert "ai_error" not in first
     assert sum(first["summary"].values()) == len(first["findings"])
     assert [finding["severity"] for finding in first["findings"]] == [
         "low",
@@ -201,6 +202,7 @@ def test_optional_ai_success_adds_only_validated_interpretation() -> None:
 
     assert report["ai_status"] == "SUCCESS"
     assert report["ai_analysis"]["executive_summary"].startswith("Review")
+    assert "ai_error" not in report
     analyst.analyze.assert_called_once()
     _validate(report)
 
@@ -242,7 +244,8 @@ def test_correlation_precedes_ai_and_skipped_analysis_remains_null() -> None:
 
     assert len(report["attack_paths"]) == 1
     assert report["ai_status"] == "SKIPPED"
-    assert report["ai_analysis"] is None
+    assert "ai_analysis" not in report
+    assert "ai_error" not in report
     correlator.correlate.assert_called_once()
     analyst.analyze.assert_called_once()
     _validate(report)
@@ -280,8 +283,48 @@ def test_ai_failure_preserves_all_deterministic_results() -> None:
         key: deepcopy(baseline[key]) for key in deterministic_fields
     }
     assert failed["ai_status"] == "FAILED"
-    assert failed["ai_analysis"] is None
+    assert "ai_analysis" not in failed
+    assert failed["ai_error"] == {
+        "stage": "api",
+        "code": "API_FAILED",
+        "message": "AI API request failed.",
+    }
     _validate(failed)
+
+
+def test_ai_failure_keeps_only_the_canonical_sanitized_error() -> None:
+    analyst = Mock()
+    analyst.analyze.return_value = {
+        "status": "FAILED",
+        "analysis": {"raw": "must not survive"},
+        "error": {
+            "stage": "untrusted stage",
+            "code": "INCOMPLETE_RESPONSE",
+            "message": "raw API response and secret must not survive",
+            "reason": "provider-specific secret detail",
+            "prompt": "raw prompt",
+        },
+    }
+
+    report = _pipeline(
+        OfflineKubernetesClient(),
+        OfflineTrivyRunner(),
+        ai_analyst=analyst,
+    ).run(TARGET, observed_at=OBSERVED_AT, ai_enabled=True)
+
+    assert report["ai_status"] == "FAILED"
+    assert "ai_analysis" not in report
+    assert report["ai_error"] == {
+        "stage": "response",
+        "code": "INCOMPLETE_RESPONSE",
+        "message": "Model response was incomplete.",
+        "reason": "unknown",
+    }
+    serialized = json.dumps(report["ai_error"])
+    assert "raw" not in serialized
+    assert "secret" not in serialized
+    assert "prompt" not in serialized
+    _validate(report)
 
 
 def test_secondary_collector_failure_is_partial_and_creates_an_evidence_gap() -> None:

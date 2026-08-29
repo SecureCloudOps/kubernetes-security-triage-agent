@@ -217,10 +217,9 @@ def _scan(args: argparse.Namespace) -> int:
     print(f"Markdown report: {markdown_path}")
 
     if report.get("ai_status") == "FAILED":
-        print(
-            "AI analysis failed; deterministic results were preserved.",
-            file=sys.stderr,
-        )
+        ai_error = report.get("ai_error")
+        code = ai_error.get("code") if isinstance(ai_error, dict) else "API_FAILED"
+        print(f"AI analysis failed: {code}", file=sys.stderr)
         return EXIT_AI_FAILED
     if report.get("scan_status") == "PARTIAL":
         print("Scan status is PARTIAL.", file=sys.stderr)

@@ -8,10 +8,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from src.ai.analyst import (
+    API_FAILED,
     AI_ANALYSIS_COMPLETE,
     AI_ANALYSIS_FAILED,
     AI_ANALYSIS_SKIPPED,
+    CONFIGURATION_FAILED,
     EvidenceGroundedAnalyst,
+    INCOMPLETE_RESPONSE,
+    REFERENCE_VALIDATION_FAILED,
+    SAFETY_VALIDATION_FAILED,
+    SCHEMA_VALIDATION_FAILED,
 )
 
 
@@ -126,6 +132,15 @@ def _client_with_output(output: dict | str) -> MagicMock:
     return client
 
 
+def _expected_error(
+    stage: str, code: str, message: str, *, reason: str | None = None
+) -> dict[str, str]:
+    error = {"stage": stage, "code": code, "message": message}
+    if reason is not None:
+        error["reason"] = reason
+    return error
+
+
 def test_success_uses_responses_structured_output_and_only_allowlisted_input(
     monkeypatch,
 ) -> None:
@@ -137,6 +152,7 @@ def test_success_uses_responses_structured_output_and_only_allowlisted_input(
 
     assert result["status"] == AI_ANALYSIS_COMPLETE
     assert result["analysis"] == _valid_analysis()
+    assert result["error"] is None
     assert result["deterministic_report"] == report
     assert result["deterministic_report"] is not report
     request = client.responses.create.call_args.kwargs
@@ -204,7 +220,24 @@ def test_empty_confirmed_evidence_skips_before_the_api_call() -> None:
 
     assert result["status"] == AI_ANALYSIS_SKIPPED
     assert result["analysis"] is None
+    assert result["error"] is None
     client.responses.create.assert_not_called()
+
+
+def test_missing_api_configuration_returns_a_sanitized_stage(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = EvidenceGroundedAnalyst().analyze(_report(), [_path()])
+
+    assert result["status"] == AI_ANALYSIS_FAILED
+    assert result["analysis"] is None
+    assert result["error"] == _expected_error(
+        "configuration",
+        CONFIGURATION_FAILED,
+        "AI analysis configuration failed.",
+    )
 
 
 def test_api_failure_is_fail_closed_and_preserves_deterministic_data() -> None:
@@ -220,7 +253,13 @@ def test_api_failure_is_fail_closed_and_preserves_deterministic_data() -> None:
     assert result["deterministic_report"] == original
     assert result["attack_paths"] == [_path()]
     assert report == original
-    assert "upstream unavailable" not in result["error"]
+    assert result["error"] == _expected_error(
+        "api", API_FAILED, "AI API request failed."
+    )
+    serialized_error = json.dumps(result["error"])
+    assert "upstream unavailable" not in serialized_error
+    assert SECRET_VALUE not in serialized_error
+    assert "UNTRUSTED_SECURITY_DATA_JSON" not in serialized_error
 
 
 def test_schema_failure_is_fail_closed() -> None:
@@ -232,6 +271,11 @@ def test_schema_failure_is_fail_closed() -> None:
 
     assert result["status"] == AI_ANALYSIS_FAILED
     assert result["deterministic_report"] == _report()
+    assert result["error"] == _expected_error(
+        "schema",
+        SCHEMA_VALIDATION_FAILED,
+        "Model response failed schema validation.",
+    )
 
 
 def test_unknown_model_references_are_rejected() -> None:
@@ -242,6 +286,11 @@ def test_unknown_model_references_are_rejected() -> None:
     result = EvidenceGroundedAnalyst(client=client).analyze(_report(), [_path()])
 
     assert result["status"] == AI_ANALYSIS_FAILED
+    assert result["error"] == _expected_error(
+        "reference",
+        REFERENCE_VALIDATION_FAILED,
+        "Model response referenced unknown or invalid evidence.",
+    )
 
 
 def test_asserting_exploitation_occurred_is_rejected() -> None:
@@ -252,6 +301,11 @@ def test_asserting_exploitation_occurred_is_rejected() -> None:
     result = EvidenceGroundedAnalyst(client=client).analyze(_report(), [_path()])
 
     assert result["status"] == AI_ANALYSIS_FAILED
+    assert result["error"] == _expected_error(
+        "safety",
+        SAFETY_VALIDATION_FAILED,
+        "Model response failed safety validation.",
+    )
 
 
 def test_unknown_supporting_finding_fails_before_api_call() -> None:
@@ -262,6 +316,11 @@ def test_unknown_supporting_finding_fails_before_api_call() -> None:
     )
 
     assert result["status"] == AI_ANALYSIS_FAILED
+    assert result["error"] == _expected_error(
+        "configuration",
+        CONFIGURATION_FAILED,
+        "AI analysis configuration failed.",
+    )
     client.responses.create.assert_not_called()
 
 
@@ -279,19 +338,72 @@ def test_allowlisted_text_is_sanitized_and_secret_like_values_are_redacted() -> 
 
 
 def test_malformed_json_is_an_analysis_failure() -> None:
-    client = _client_with_output("not JSON")
+    client = _client_with_output(f"not JSON {SECRET_VALUE}")
 
     result = EvidenceGroundedAnalyst(client=client).analyze(_report(), [_path()])
 
     assert result["status"] == AI_ANALYSIS_FAILED
+    assert result["error"] == _expected_error(
+        "schema",
+        SCHEMA_VALIDATION_FAILED,
+        "Model response failed schema validation.",
+    )
+    assert SECRET_VALUE not in json.dumps(result["error"])
 
 
 def test_incomplete_api_response_is_an_analysis_failure() -> None:
     client = MagicMock()
     client.responses.create.return_value = SimpleNamespace(
-        status="incomplete", output_text=json.dumps(_valid_analysis())
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output_text=f"raw response {SECRET_VALUE}",
     )
 
     result = EvidenceGroundedAnalyst(client=client).analyze(_report(), [_path()])
 
     assert result["status"] == AI_ANALYSIS_FAILED
+    assert result["analysis"] is None
+    assert result["error"] == _expected_error(
+        "response",
+        INCOMPLETE_RESPONSE,
+        "Model response was incomplete.",
+        reason="max_output_tokens",
+    )
+    assert SECRET_VALUE not in json.dumps(result["error"])
+
+
+def test_unknown_incomplete_reason_is_safely_reduced_to_unknown() -> None:
+    client = MagicMock()
+    client.responses.create.return_value = SimpleNamespace(
+        status="incomplete",
+        incomplete_details={"reason": f"provider-detail-{SECRET_VALUE}"},
+        output_text=None,
+    )
+
+    result = EvidenceGroundedAnalyst(client=client).analyze(_report(), [_path()])
+
+    assert result["error"] == _expected_error(
+        "response",
+        INCOMPLETE_RESPONSE,
+        "Model response was incomplete.",
+        reason="unknown",
+    )
+    assert SECRET_VALUE not in json.dumps(result["error"])
+
+
+def test_content_filter_incomplete_reason_is_allowlisted() -> None:
+    client = MagicMock()
+    client.responses.create.return_value = SimpleNamespace(
+        status="incomplete",
+        incomplete_details={"reason": "content_filter"},
+        output_text=None,
+    )
+
+    result = EvidenceGroundedAnalyst(client=client).analyze(_report(), [_path()])
+
+    assert result["error"] == _expected_error(
+        "response",
+        INCOMPLETE_RESPONSE,
+        "Model response was incomplete.",
+        reason="content_filter",
+    )

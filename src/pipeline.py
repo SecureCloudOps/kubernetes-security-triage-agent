@@ -12,10 +12,13 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 
 from src.ai.analyst import (
+    API_FAILED,
     AI_ANALYSIS_COMPLETE,
     AI_ANALYSIS_FAILED,
     AI_ANALYSIS_SKIPPED,
     EvidenceGroundedAnalyst,
+    normalize_ai_error,
+    sanitized_ai_error,
 )
 from src.analysis.correlation import correlate_findings
 from src.analysis.exposure_rules import analyze_exposure
@@ -127,7 +130,7 @@ def _invoke_analyzer(analyzer: Any, evidence: Any) -> Any:
 
 def _workload_inputs(
     details: Mapping[str, Any], *, kind: str
-) -> tuple[dict[str, Any], dict[str, str], list[Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[Any]]:
     """Extract and validate the shared inputs used by secondary collectors."""
 
     workload = details["manifest"]
@@ -169,7 +172,7 @@ def _workload_inputs(
         "serviceAccountName", pod_spec.get("service_account_name", "default")
     )
     _required_text(service_account or "default", "service account")
-    return dict(workload), dict(raw_labels), images.copy()
+    return dict(workload), dict(pod_spec), dict(raw_labels), images.copy()
 
 
 class DeterministicScanPipeline:
@@ -299,7 +302,7 @@ class DeterministicScanPipeline:
 
         try:
             details = workload_result.evidence[0].details
-            workload, pod_labels, images = _workload_inputs(
+            workload, pod_spec, pod_labels, images = _workload_inputs(
                 details, kind=scan_target.kind
             )
         except (IndexError, KeyError, TypeError, ValueError) as exc:
@@ -310,6 +313,7 @@ class DeterministicScanPipeline:
 
         collector_results = self._collect_secondary(
             workload=workload,
+            pod_spec=pod_spec,
             pod_labels=pod_labels,
             images=images,
             target=scan_target,
@@ -384,7 +388,6 @@ class DeterministicScanPipeline:
             "findings": findings,
             "attack_paths": [],
             "ai_status": "DISABLED",
-            "ai_analysis": None,
             "evidence_gaps": evidence_gaps,
             "summary": summary,
         }
@@ -445,21 +448,33 @@ class DeterministicScanPipeline:
                 if ai_status == "SUCCESS"
                 else None
             )
+            ai_error = (
+                normalize_ai_error(result.get("error"))
+                if ai_status == "FAILED"
+                else None
+            )
             candidate = deepcopy(report)
             candidate["ai_status"] = ai_status
-            candidate["ai_analysis"] = ai_analysis
+            candidate.pop("ai_analysis", None)
+            candidate.pop("ai_error", None)
+            if ai_analysis is not None:
+                candidate["ai_analysis"] = ai_analysis
+            if ai_error is not None:
+                candidate["ai_error"] = ai_error
             self._validator.validate(candidate)
             return candidate
         except Exception:
             failed = deepcopy(report)
             failed["ai_status"] = "FAILED"
-            failed["ai_analysis"] = None
+            failed.pop("ai_analysis", None)
+            failed["ai_error"] = sanitized_ai_error(API_FAILED)
             return failed
 
     def _collect_secondary(
         self,
         *,
         workload: dict[str, Any],
+        pod_spec: dict[str, Any],
         pod_labels: dict[str, str],
         images: list[Any],
         target: Target,
@@ -470,8 +485,8 @@ class DeterministicScanPipeline:
                 target=target,
                 status=ScanStatus.COMPLETE,
                 evidence=self.security_context_collector.collect(
-                    workload,
-                    cluster=target.cluster,
+                    pod_spec,
+                    target=target,
                     observed_at=observed_at,
                 ),
             ),

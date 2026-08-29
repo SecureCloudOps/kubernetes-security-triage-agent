@@ -77,7 +77,6 @@ def _report(*, status: str = "COMPLETE", severity: str = "high") -> dict:
         "findings": [finding],
         "attack_paths": [],
         "ai_status": "DISABLED",
-        "ai_analysis": None,
         "evidence_gaps": gaps,
         "summary": summary,
     }
@@ -369,10 +368,16 @@ def test_partial_scan_writes_reports_and_returns_distinct_nonzero_exit(
 
 
 def test_ai_flag_is_forwarded_and_ai_failure_writes_reports_before_nonzero_exit(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     report = _report()
     report["ai_status"] = "FAILED"
+    report["ai_error"] = {
+        "stage": "response",
+        "code": "INCOMPLETE_RESPONSE",
+        "message": "Model response was incomplete.",
+        "reason": "max_output_tokens",
+    }
 
     code, pipeline = _run_with_mocks(
         monkeypatch, tmp_path, report, ai=True
@@ -392,8 +397,10 @@ def test_ai_flag_is_forwarded_and_ai_failure_writes_reports_before_nonzero_exit(
         (tmp_path / "scan-report.json").read_text(encoding="utf-8")
     )
     assert written["ai_status"] == "FAILED"
+    assert written["ai_error"] == report["ai_error"]
     assert written["findings"] == report["findings"]
     assert (tmp_path / "scan-report.md").exists()
+    assert capsys.readouterr().err == "AI analysis failed: INCOMPLETE_RESPONSE\n"
 
 
 def test_invalid_report_is_rejected_before_either_file_is_written(

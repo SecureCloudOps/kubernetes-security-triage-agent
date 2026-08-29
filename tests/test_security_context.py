@@ -114,3 +114,19 @@ def test_returns_one_evidence_object_per_container() -> None:
     ]
     assert evidence[1].details["privileged"] is None
     assert evidence[1].details["runAsNonRoot"] is True
+
+
+def test_none_container_values_inherit_pod_security_context() -> None:
+    manifest = _load_fixture("secure-deployment.yaml")
+    container_context = manifest["spec"]["template"]["spec"]["containers"][0][
+        "securityContext"
+    ]
+    container_context["runAsUser"] = None
+    container_context["runAsNonRoot"] = None
+    container_context["seccompProfile"] = None
+
+    details = collect_security_context(manifest, observed_at=OBSERVED_AT)[0].details
+
+    assert details["runAsUser"] == 10001
+    assert details["runAsNonRoot"] is True
+    assert details["seccompProfile"] == {"type": "RuntimeDefault"}

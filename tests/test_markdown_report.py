@@ -71,7 +71,6 @@ def _report() -> dict:
         ],
         "attack_paths": [],
         "ai_status": "DISABLED",
-        "ai_analysis": None,
         "evidence_gaps": [],
         "summary": {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0},
     }

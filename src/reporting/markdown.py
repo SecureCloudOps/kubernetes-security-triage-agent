@@ -149,6 +149,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     attack_paths = safe.get("attack_paths")
     ai_status = safe.get("ai_status")
     ai_analysis = safe.get("ai_analysis")
+    ai_error = safe.get("ai_error")
     gaps = safe.get("evidence_gaps")
     if not isinstance(target, Mapping):
         raise ValueError("report.target must be an object")
@@ -164,6 +165,10 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         raise ValueError("successful AI analysis must be an object")
     if ai_status != "SUCCESS" and ai_analysis is not None:
         raise ValueError("non-successful AI analysis must be null")
+    if ai_status == "FAILED" and not isinstance(ai_error, Mapping):
+        raise ValueError("failed AI analysis must include an error")
+    if ai_status != "FAILED" and ai_error is not None:
+        raise ValueError("non-failed AI analysis must not include an error")
     if not isinstance(gaps, list):
         raise ValueError("report.evidence_gaps must be a list")
 
@@ -322,8 +327,13 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             ["AI analysis was requested but skipped because there was nothing eligible to interpret.", ""]
         )
     elif ai_status == "FAILED":
+        code = ai_error.get("code") if isinstance(ai_error, Mapping) else "unknown"
         lines.extend(
-            ["AI analysis failed. Deterministic findings and plausible paths remain unchanged.", ""]
+            [
+                f"AI analysis failed: {_cell(code)}.",
+                "Deterministic findings and plausible paths remain unchanged.",
+                "",
+            ]
         )
     elif isinstance(ai_analysis, Mapping):
         lines.extend(

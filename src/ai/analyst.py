@@ -24,6 +24,12 @@ from .prompts import SYSTEM_PROMPT, build_analysis_input
 AI_ANALYSIS_COMPLETE = "COMPLETE"
 AI_ANALYSIS_SKIPPED = "SKIPPED"
 AI_ANALYSIS_FAILED = "AI_ANALYSIS_FAILED"
+CONFIGURATION_FAILED = "CONFIGURATION_FAILED"
+API_FAILED = "API_FAILED"
+INCOMPLETE_RESPONSE = "INCOMPLETE_RESPONSE"
+SCHEMA_VALIDATION_FAILED = "SCHEMA_VALIDATION_FAILED"
+REFERENCE_VALIDATION_FAILED = "REFERENCE_VALIDATION_FAILED"
+SAFETY_VALIDATION_FAILED = "SAFETY_VALIDATION_FAILED"
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "schemas" / "ai-analysis.schema.json"
@@ -37,6 +43,30 @@ MAX_TEXT_CHARS = 800
 MAX_MODEL_INPUT_CHARS = 100_000
 MAX_MODEL_OUTPUT_CHARS = 200_000
 MAX_OUTPUT_TOKENS = 4_000
+
+_ERROR_DETAILS = {
+    CONFIGURATION_FAILED: (
+        "configuration",
+        "AI analysis configuration failed.",
+    ),
+    API_FAILED: ("api", "AI API request failed."),
+    INCOMPLETE_RESPONSE: ("response", "Model response was incomplete."),
+    SCHEMA_VALIDATION_FAILED: (
+        "schema",
+        "Model response failed schema validation.",
+    ),
+    REFERENCE_VALIDATION_FAILED: (
+        "reference",
+        "Model response referenced unknown or invalid evidence.",
+    ),
+    SAFETY_VALIDATION_FAILED: (
+        "safety",
+        "Model response failed safety validation.",
+    ),
+}
+_KNOWN_INCOMPLETE_REASONS = frozenset(
+    {"max_output_tokens", "content_filter", "unknown"}
+)
 
 _FINDING_ID = re.compile(r"^KSA-[0-9a-fA-F]{12}$")
 _ATTACK_PATH_ID = re.compile(r"^KAP-[0-9a-f]{12}$")
@@ -88,6 +118,54 @@ _NEGATION = re.compile(
 
 class _BoundaryError(ValueError):
     """Raised when data cannot safely cross the AI boundary."""
+
+
+class _IncompleteResponse(_BoundaryError):
+    """Raised when the API safely reports an incomplete response."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("model response was incomplete")
+        self.reason = reason
+
+
+class _ResponseSchemaError(_BoundaryError):
+    """Raised when model output cannot satisfy the structured-output contract."""
+
+
+class _ReferenceValidationError(_BoundaryError):
+    """Raised when model output references evidence outside the allowlist."""
+
+
+class _SafetyValidationError(_BoundaryError):
+    """Raised when model output makes a prohibited incident claim."""
+
+
+def sanitized_ai_error(
+    code: str,
+    *,
+    reason: Any = None,
+) -> dict[str, str]:
+    """Build a canonical error without retaining untrusted diagnostic text."""
+
+    canonical_code = code if code in _ERROR_DETAILS else API_FAILED
+    stage, message = _ERROR_DETAILS[canonical_code]
+    error = {
+        "stage": stage,
+        "code": canonical_code,
+        "message": message,
+    }
+    if canonical_code == INCOMPLETE_RESPONSE:
+        safe_reason = reason if reason in _KNOWN_INCOMPLETE_REASONS else "unknown"
+        error["reason"] = safe_reason
+    return error
+
+
+def normalize_ai_error(value: Any) -> dict[str, str]:
+    """Reduce an analyst-supplied error to the public allowlisted contract."""
+
+    if not isinstance(value, Mapping):
+        return sanitized_ai_error(API_FAILED)
+    return sanitized_ai_error(value.get("code"), reason=value.get("reason"))
 
 
 def _clean_text(value: Any, field_name: str) -> str:
@@ -328,17 +406,30 @@ def _output_text(response: Any) -> str:
         if isinstance(response, Mapping)
         else getattr(response, "status", None)
     )
+    if status == "incomplete":
+        details = (
+            response.get("incomplete_details")
+            if isinstance(response, Mapping)
+            else getattr(response, "incomplete_details", None)
+        )
+        reason = (
+            details.get("reason")
+            if isinstance(details, Mapping)
+            else getattr(details, "reason", None)
+        )
+        safe_reason = reason if reason in _KNOWN_INCOMPLETE_REASONS else "unknown"
+        raise _IncompleteResponse(safe_reason)
     if status is not None and status != "completed":
-        raise _BoundaryError(f"model response was not completed: {status}")
+        raise _BoundaryError("model response did not complete")
     value = (
         response.get("output_text")
         if isinstance(response, Mapping)
         else getattr(response, "output_text", None)
     )
     if not isinstance(value, str) or not value.strip():
-        raise _BoundaryError("model response did not contain output_text")
+        raise _ResponseSchemaError("model response did not contain output_text")
     if len(value) > MAX_MODEL_OUTPUT_CHARS:
-        raise _BoundaryError("model response exceeded the output limit")
+        raise _ResponseSchemaError("model response exceeded the output limit")
     return value
 
 
@@ -359,7 +450,7 @@ def _validate_no_incident_claims(analysis: Mapping[str, Any]) -> None:
             if _NEGATION.search(sentence):
                 continue
             if any(pattern.search(sentence) for pattern in _ASSERTIVE_INCIDENT_PATTERNS):
-                raise _BoundaryError(
+                raise _SafetyValidationError(
                     "model output asserted exploitation or compromise as fact"
                 )
 
@@ -371,25 +462,33 @@ def _validate_references(
     for text in _all_text_values(analysis):
         for referenced_id in _ANY_EVIDENCE_ID.findall(text):
             if referenced_id not in known_ids:
-                raise _BoundaryError(f"model output referenced unknown ID {referenced_id}")
+                raise _ReferenceValidationError(
+                    f"model output referenced unknown ID {referenced_id}"
+                )
 
     explained: set[str] = set()
     for item in analysis["attack_path_explanations"]:
         path_id = item["attack_path_id"]
         if path_id not in path_ids or path_id in explained:
-            raise _BoundaryError("attack path explanations contain an invalid reference")
+            raise _ReferenceValidationError(
+                "attack path explanations contain an invalid reference"
+            )
         explained.add(path_id)
 
     priorities = analysis["priority_order"]
     positions = [item["position"] for item in priorities]
     if positions != list(range(1, len(priorities) + 1)):
-        raise _BoundaryError("priority positions must be unique and contiguous")
+        raise _ReferenceValidationError(
+            "priority positions must be unique and contiguous"
+        )
     priority_ids: set[str] = set()
     for item in priorities:
         reference_id = item["reference_id"]
         expected = finding_ids if item["reference_type"] == "finding" else path_ids
         if reference_id not in expected or reference_id in priority_ids:
-            raise _BoundaryError("priority order contains an invalid reference")
+            raise _ReferenceValidationError(
+                "priority order contains an invalid reference"
+            )
         priority_ids.add(reference_id)
 
     for section in ("remediation_steps", "operator_review_notes"):
@@ -397,11 +496,17 @@ def _validate_references(
             referenced_findings = item["finding_ids"]
             referenced_paths = item["attack_path_ids"]
             if not referenced_findings and not referenced_paths:
-                raise _BoundaryError(f"{section} item is not tied to existing evidence")
+                raise _ReferenceValidationError(
+                    f"{section} item is not tied to existing evidence"
+                )
             if not set(referenced_findings).issubset(finding_ids):
-                raise _BoundaryError(f"{section} referenced an unknown finding")
+                raise _ReferenceValidationError(
+                    f"{section} referenced an unknown finding"
+                )
             if not set(referenced_paths).issubset(path_ids):
-                raise _BoundaryError(f"{section} referenced an unknown attack path")
+                raise _ReferenceValidationError(
+                    f"{section} referenced an unknown attack path"
+                )
 
 
 def _safe_result(
@@ -410,14 +515,14 @@ def _safe_result(
     report: Any,
     attack_paths: list[Any],
     analysis: dict[str, Any] | None = None,
-    error: str | None = None,
+    error: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     return {
         "status": status,
         "deterministic_report": deepcopy(report),
         "attack_paths": deepcopy(attack_paths),
         "analysis": deepcopy(analysis),
-        "error": error,
+        "error": deepcopy(dict(error)) if error is not None else None,
     }
 
 
@@ -471,7 +576,7 @@ class EvidenceGroundedAnalyst:
                 status=AI_ANALYSIS_FAILED,
                 report=report_copy,
                 attack_paths=[],
-                error="AI input validation failed",
+                error=sanitized_ai_error(CONFIGURATION_FAILED),
             )
 
         try:
@@ -497,6 +602,15 @@ class EvidenceGroundedAnalyst:
                 for key, value in schema.items()
                 if key not in {"$schema", "$id", "title"}
             }
+        except Exception:
+            return _safe_result(
+                status=AI_ANALYSIS_FAILED,
+                report=report_copy,
+                attack_paths=raw_paths,
+                error=sanitized_ai_error(CONFIGURATION_FAILED),
+            )
+
+        try:
             response = client.responses.create(
                 model=model,
                 instructions=SYSTEM_PROMPT,
@@ -514,25 +628,79 @@ class EvidenceGroundedAnalyst:
                 store=False,
                 max_output_tokens=MAX_OUTPUT_TOKENS,
             )
-            output = json.loads(_output_text(response))
-            if not isinstance(output, dict):
-                raise _BoundaryError("model output must be a JSON object")
-            Draft202012Validator(schema).validate(output)
-            _validate_references(output, finding_ids=finding_ids, path_ids=path_ids)
-            _validate_no_incident_claims(output)
+        except Exception:
             return _safe_result(
-                status=AI_ANALYSIS_COMPLETE,
+                status=AI_ANALYSIS_FAILED,
                 report=report_copy,
                 attack_paths=raw_paths,
-                analysis=output,
+                error=sanitized_ai_error(API_FAILED),
+            )
+
+        try:
+            output_text = _output_text(response)
+        except _IncompleteResponse as exc:
+            return _safe_result(
+                status=AI_ANALYSIS_FAILED,
+                report=report_copy,
+                attack_paths=raw_paths,
+                error=sanitized_ai_error(
+                    INCOMPLETE_RESPONSE,
+                    reason=exc.reason,
+                ),
+            )
+        except _ResponseSchemaError:
+            return _safe_result(
+                status=AI_ANALYSIS_FAILED,
+                report=report_copy,
+                attack_paths=raw_paths,
+                error=sanitized_ai_error(SCHEMA_VALIDATION_FAILED),
             )
         except Exception:
             return _safe_result(
                 status=AI_ANALYSIS_FAILED,
                 report=report_copy,
                 attack_paths=raw_paths,
-                error="AI API, schema, or safety validation failed",
+                error=sanitized_ai_error(API_FAILED),
             )
+
+        try:
+            output = json.loads(output_text)
+            if not isinstance(output, dict):
+                raise _ResponseSchemaError("model output must be a JSON object")
+            Draft202012Validator(schema).validate(output)
+        except Exception:
+            return _safe_result(
+                status=AI_ANALYSIS_FAILED,
+                report=report_copy,
+                attack_paths=raw_paths,
+                error=sanitized_ai_error(SCHEMA_VALIDATION_FAILED),
+            )
+
+        try:
+            _validate_references(output, finding_ids=finding_ids, path_ids=path_ids)
+        except Exception:
+            return _safe_result(
+                status=AI_ANALYSIS_FAILED,
+                report=report_copy,
+                attack_paths=raw_paths,
+                error=sanitized_ai_error(REFERENCE_VALIDATION_FAILED),
+            )
+
+        try:
+            _validate_no_incident_claims(output)
+        except Exception:
+            return _safe_result(
+                status=AI_ANALYSIS_FAILED,
+                report=report_copy,
+                attack_paths=raw_paths,
+                error=sanitized_ai_error(SAFETY_VALIDATION_FAILED),
+            )
+        return _safe_result(
+            status=AI_ANALYSIS_COMPLETE,
+            report=report_copy,
+            attack_paths=raw_paths,
+            analysis=output,
+        )
 
     run = analyze
 
@@ -555,12 +723,20 @@ def analyze_report(
 
 
 __all__ = [
+    "API_FAILED",
     "AI_ANALYSIS_COMPLETE",
     "AI_ANALYSIS_FAILED",
     "AI_ANALYSIS_SKIPPED",
     "AIAnalyst",
+    "CONFIGURATION_FAILED",
     "DEFAULT_MODEL",
     "DEFAULT_SCHEMA_PATH",
     "EvidenceGroundedAnalyst",
+    "INCOMPLETE_RESPONSE",
+    "REFERENCE_VALIDATION_FAILED",
+    "SAFETY_VALIDATION_FAILED",
+    "SCHEMA_VALIDATION_FAILED",
     "analyze_report",
+    "normalize_ai_error",
+    "sanitized_ai_error",
 ]
